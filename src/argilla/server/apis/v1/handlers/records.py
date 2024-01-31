@@ -21,17 +21,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from argilla.server.contexts import datasets
 from argilla.server.database import get_async_db
-from argilla.server.models import User
+from argilla.server.models import Record, User
 from argilla.server.policies import RecordPolicyV1, authorize
-from argilla.server.schemas.v1.datasets import Record as RecordSchema
-from argilla.server.schemas.v1.records import RecordUpdate, Response, ResponseCreate
+from argilla.server.schemas.v1.records import Record as RecordSchema
+from argilla.server.schemas.v1.records import RecordUpdate
+from argilla.server.schemas.v1.responses import Response, ResponseCreate
 from argilla.server.schemas.v1.suggestions import Suggestion, SuggestionCreate, Suggestions
 from argilla.server.search_engine import SearchEngine, get_search_engine
 from argilla.server.security import auth
 from argilla.server.utils import parse_uuids
-
-if TYPE_CHECKING:
-    from argilla.server.models import Record
 
 DELETE_RECORD_SUGGESTIONS_LIMIT = 100
 
@@ -39,14 +37,32 @@ router = APIRouter(tags=["records"])
 
 
 async def _get_record(
-    db: AsyncSession, record_id: UUID, with_dataset: bool = False, with_suggestions: bool = False
-) -> "Record":
-    record = await datasets.get_record_by_id(db, record_id, with_dataset, with_suggestions)
+    db: AsyncSession,
+    record_id: UUID,
+    with_dataset: bool = False,
+    with_suggestions: bool = False,
+    with_vectors: bool = False,
+) -> Record:
+    record = await datasets.get_record_by_id(db, record_id, with_dataset, with_suggestions, with_vectors)
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with id `{record_id}` not found",
         )
+    return record
+
+
+@router.get("/records/{record_id}", response_model=RecordSchema)
+async def get_record(
+    *,
+    db: AsyncSession = Depends(get_async_db),
+    record_id: UUID,
+    current_user: User = Security(auth.get_current_user),
+):
+    record = await _get_record(db, record_id, with_dataset=True, with_suggestions=True)
+
+    await authorize(current_user, RecordPolicyV1.get(record))
+
     return record
 
 
@@ -59,7 +75,7 @@ async def update_record(
     record_update: RecordUpdate,
     current_user: User = Security(auth.get_current_user),
 ):
-    record = await _get_record(db, record_id, with_dataset=True, with_suggestions=True)
+    record = await _get_record(db, record_id, with_dataset=True, with_suggestions=True, with_vectors=True)
 
     await authorize(current_user, RecordPolicyV1.update(record))
 
@@ -120,6 +136,7 @@ async def get_record_suggestions(
 async def upsert_suggestion(
     *,
     db: AsyncSession = Depends(get_async_db),
+    search_engine: SearchEngine = Depends(get_search_engine),
     record_id: UUID,
     suggestion_create: SuggestionCreate,
     current_user: User = Security(auth.get_current_user),
@@ -143,7 +160,7 @@ async def upsert_suggestion(
     # TODO: We should split API v1 into different FastAPI apps so we can customize error management.
     # After mapping ValueError to 422 errors for API v1 then we can remove this try except.
     try:
-        return await datasets.upsert_suggestion(db, record, question, suggestion_create)
+        return await datasets.upsert_suggestion(db, search_engine, record, question, suggestion_create)
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(err))
 
@@ -156,11 +173,12 @@ async def upsert_suggestion(
 async def delete_record_suggestions(
     *,
     db: AsyncSession = Depends(get_async_db),
+    search_engine: SearchEngine = Depends(get_search_engine),
     record_id: UUID,
     current_user: User = Security(auth.get_current_user),
     ids: str = Query(..., description="A comma separated list with the IDs of the suggestions to be removed"),
 ):
-    record = await _get_record(db, record_id)
+    record = await _get_record(db, record_id, with_dataset=True)
 
     await authorize(current_user, RecordPolicyV1.delete_suggestions(record))
 
@@ -176,7 +194,7 @@ async def delete_record_suggestions(
             detail=f"Cannot delete more than {DELETE_RECORD_SUGGESTIONS_LIMIT} suggestions at once",
         )
 
-    await datasets.delete_suggestions(db, record, suggestion_ids)
+    await datasets.delete_suggestions(db, search_engine, record, suggestion_ids)
 
 
 @router.delete("/records/{record_id}", response_model=RecordSchema, response_model_exclude_unset=True)

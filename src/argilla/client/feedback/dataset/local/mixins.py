@@ -12,14 +12,12 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Type, Union
+import logging
+from typing import TYPE_CHECKING, List, Literal, Optional, Type, Union
 from uuid import UUID
 
-from tqdm import trange
-
-from argilla.client.api import ArgillaSingleton
-from argilla.client.feedback.constants import PUSHING_BATCH_SIZE
-from argilla.client.feedback.dataset.remote.dataset import RemoteFeedbackDataset
+from argilla.client.feedback.dataset.helpers import get_dataset_by_name_and_workspace
+from argilla.client.feedback.dataset.remote.dataset import INCLUDE_ALL_VECTORS_PARAM, RemoteFeedbackDataset
 from argilla.client.feedback.schemas.enums import FieldTypes, MetadataPropertyTypes, QuestionTypes
 from argilla.client.feedback.schemas.fields import TextField
 from argilla.client.feedback.schemas.questions import (
@@ -43,8 +41,10 @@ from argilla.client.feedback.schemas.remote.questions import (
     RemoteTextQuestion,
 )
 from argilla.client.feedback.schemas.types import AllowedMetadataPropertyTypes
-from argilla.client.feedback.utils import feedback_dataset_in_argilla
+from argilla.client.feedback.schemas.vector_settings import VectorSettings
+from argilla.client.sdk.commons.errors import AlreadyExistsApiError
 from argilla.client.sdk.v1.datasets import api as datasets_api_v1
+from argilla.client.singleton import ArgillaSingleton
 from argilla.client.workspaces import Workspace
 
 if TYPE_CHECKING:
@@ -53,7 +53,6 @@ if TYPE_CHECKING:
     from argilla.client.client import Argilla as ArgillaClient
     from argilla.client.feedback.dataset.local import FeedbackDataset
     from argilla.client.feedback.dataset.local.dataset import FeedbackDataset
-    from argilla.client.feedback.schemas.records import FeedbackRecord
     from argilla.client.feedback.schemas.types import (
         AllowedFieldTypes,
         AllowedMetadataPropertyTypes,
@@ -68,6 +67,22 @@ if TYPE_CHECKING:
         FeedbackMetadataPropertyModel,
         FeedbackQuestionModel,
     )
+
+_LOGGER = logging.getLogger(__name__)
+_LOGGER.setLevel(logging.INFO)
+
+
+def _prepare_workspace(client, workspace):
+    if workspace is None:
+        workspace = client.get_workspace()
+
+    if workspace is None:
+        raise ValueError("No workspace provided and no active workspace found.")
+
+    if isinstance(workspace, str):
+        workspace = Workspace.from_name(workspace)
+
+    return workspace
 
 
 class ArgillaMixin:
@@ -201,40 +216,11 @@ class ArgillaMixin:
             ArgillaMixin.__delete_dataset(client=client, id=id)
             raise Exception(f"Failed while publishing the `FeedbackDataset` in Argilla with exception: {e}") from e
 
-    @staticmethod
-    def __push_records(
-        records: List["FeedbackRecord"],
-        client: "httpx.Client",
-        id: UUID,
-        question_name_to_id: Dict[str, UUID],
-        show_progress: bool = True,
-    ) -> None:
-        if len(records) == 0:
-            return
-
-        for i in trange(
-            0, len(records), PUSHING_BATCH_SIZE, desc="Pushing records to Argilla...", disable=show_progress
-        ):
-            try:
-                datasets_api_v1.add_records(
-                    client=client,
-                    id=id,
-                    records=[
-                        record.to_server_payload(question_name_to_id=question_name_to_id)
-                        for record in records[i : i + PUSHING_BATCH_SIZE]
-                    ],
-                )
-            except Exception as e:
-                ArgillaMixin.__delete_dataset(client=client, id=id)
-                raise Exception(
-                    f"Failed while adding the records to the `FeedbackDataset` in Argilla with exception: {e}"
-                ) from e
-
     def push_to_argilla(
         self: Union["FeedbackDataset", "ArgillaMixin"],
         name: str,
         workspace: Optional[Union[str, Workspace]] = None,
-        show_progress: bool = False,
+        show_progress: bool = True,
     ) -> RemoteFeedbackDataset:
         """Pushes the `FeedbackDataset` to Argilla.
 
@@ -252,65 +238,53 @@ class ArgillaMixin:
         client: "ArgillaClient" = ArgillaSingleton.get()
         httpx_client: "httpx.Client" = client.http_client.httpx
 
-        if workspace is None:
-            workspace = Workspace.from_name(client.get_workspace())
-
-        if isinstance(workspace, str):
-            workspace = Workspace.from_name(workspace)
-
-        dataset = feedback_dataset_in_argilla(name=name, workspace=workspace)
-        if dataset is not None:
-            raise RuntimeError(
-                f"Dataset with name=`{name}` and workspace=`{workspace.name}` already exists in Argilla, please"
-                " choose another name and/or workspace."
-            )
+        workspace = _prepare_workspace(client, workspace)
+        created_dataset = _create_argilla_dataset_or_raise(httpx_client, name, workspace, dataset=self)
 
         try:
-            new_dataset: "FeedbackDatasetModel" = datasets_api_v1.create_dataset(
+            ArgillaMixin.__add_fields(fields=self.fields, client=httpx_client, id=created_dataset.id)
+            ArgillaMixin.__add_questions(questions=self.questions, client=httpx_client, id=created_dataset.id)
+
+            if self.metadata_properties:
+                ArgillaMixin.__add_metadata_properties(
+                    metadata_properties=self.metadata_properties, client=httpx_client, id=created_dataset.id
+                )
+
+            if self.vectors_settings:
+                ArgillaMixin.__add_vectors_settings(
+                    vectors_settings=self.vectors_settings, client=httpx_client, id=created_dataset.id
+                )
+
+            ArgillaMixin.__publish_dataset(client=httpx_client, id=created_dataset.id)
+
+            # TODO: Remote dataset should connect all settings by API calls requested on demand.
+            #  Once is done, this prefetch info should be removed.
+            fields = ArgillaMixin.__get_fields(client=httpx_client, id=created_dataset.id)
+            questions = ArgillaMixin.__get_questions(client=httpx_client, id=created_dataset.id)
+
+            remote_dataset = RemoteFeedbackDataset(
                 client=httpx_client,
+                id=created_dataset.id,
                 name=name,
-                workspace_id=workspace.id,
+                workspace=workspace,
+                created_at=created_dataset.inserted_at,
+                updated_at=created_dataset.updated_at,
+                fields=fields,
+                questions=questions,
                 guidelines=self.guidelines,
                 allow_extra_metadata=self.allow_extra_metadata,
-            ).parsed
-            argilla_id = new_dataset.id
-        except Exception as e:
-            raise Exception(f"Failed while creating the `FeedbackDataset` in Argilla with exception: {e}") from e
+            )
 
-        ArgillaMixin.__add_fields(fields=self.fields, client=httpx_client, id=argilla_id)
-        fields = ArgillaMixin.__get_fields(client=httpx_client, id=argilla_id)
+            if len(self.records) > 0:
+                remote_dataset.add_records(self.records, show_progress)
 
-        ArgillaMixin.__add_questions(questions=self.questions, client=httpx_client, id=argilla_id)
-        questions = ArgillaMixin.__get_questions(client=httpx_client, id=argilla_id)
-        question_name_to_id = {question.name: question.id for question in questions}
+            _LOGGER.info("✓ Dataset succesfully pushed to Argilla")
+            _LOGGER.info(remote_dataset)
 
-        metadata_properties = ArgillaMixin.__add_metadata_properties(
-            metadata_properties=self.metadata_properties, client=httpx_client, id=argilla_id
-        )
-
-        ArgillaMixin.__publish_dataset(client=httpx_client, id=argilla_id)
-
-        ArgillaMixin.__push_records(
-            records=list(self.records),
-            client=httpx_client,
-            id=argilla_id,
-            show_progress=show_progress,
-            question_name_to_id=question_name_to_id,
-        )
-
-        return RemoteFeedbackDataset(
-            client=httpx_client,
-            id=argilla_id,
-            name=name,
-            workspace=workspace,
-            created_at=new_dataset.inserted_at,
-            updated_at=new_dataset.updated_at,
-            fields=fields,
-            questions=questions,
-            metadata_properties=metadata_properties,
-            guidelines=self.guidelines,
-            allow_extra_metadata=self.allow_extra_metadata,
-        )
+            return remote_dataset
+        except Exception as ex:
+            ArgillaMixin.__delete_dataset(client=httpx_client, id=created_dataset.id)
+            raise ex
 
     @staticmethod
     def __get_fields(client: "httpx.Client", id: UUID) -> List["AllowedRemoteFieldTypes"]:
@@ -342,6 +316,7 @@ class ArgillaMixin:
         *,
         workspace: Optional[str] = None,
         id: Optional[Union[UUID, str]] = None,
+        with_vectors: Union[Literal[INCLUDE_ALL_VECTORS_PARAM], List[str], None] = None,
     ) -> RemoteFeedbackDataset:
         """Retrieves an existing `FeedbackDataset` from Argilla (must have been pushed in advance).
 
@@ -353,6 +328,8 @@ class ArgillaMixin:
             workspace: the workspace of the `FeedbackDataset` to retrieve from Argilla.
                 If not provided, the active workspace will be used.
             id: the ID of the `FeedbackDataset` to retrieve from Argilla. Defaults to `None`.
+            with_vectors: the vector settings to retrieve from Argilla. Use `all` to download all vectors.
+                Defaults to `None`.
 
         Returns:
             The `RemoteFeedbackDataset` retrieved from Argilla.
@@ -367,7 +344,7 @@ class ArgillaMixin:
         """
         httpx_client: "httpx.Client" = ArgillaSingleton.get().http_client.httpx
 
-        existing_dataset = feedback_dataset_in_argilla(name=name, workspace=workspace, id=id)
+        existing_dataset = get_dataset_by_name_and_workspace(name=name, workspace=workspace, id=id)
         if existing_dataset is None:
             raise ValueError(
                 f"Could not find a `FeedbackDataset` in Argilla with name='{name}'."
@@ -375,13 +352,12 @@ class ArgillaMixin:
                 else (
                     f"Could not find a `FeedbackDataset` in Argilla with name='{name}' and workspace='{workspace}'."
                     if name and workspace
-                    else (f"Could not find a `FeedbackDataset` in Argilla with ID='{id}'.")
+                    else f"Could not find a `FeedbackDataset` in Argilla with ID='{id}'."
                 )
             )
 
         fields = ArgillaMixin.__get_fields(client=httpx_client, id=existing_dataset.id)
         questions = ArgillaMixin.__get_questions(client=httpx_client, id=existing_dataset.id)
-        metadata_properties = ArgillaMixin.__get_metadata_properties(client=httpx_client, id=existing_dataset.id)
 
         return RemoteFeedbackDataset(
             client=httpx_client,
@@ -392,9 +368,9 @@ class ArgillaMixin:
             updated_at=existing_dataset.updated_at,
             fields=fields,
             questions=questions,
-            metadata_properties=metadata_properties,
             guidelines=existing_dataset.guidelines or None,
             allow_extra_metadata=existing_dataset.allow_extra_metadata,
+            with_vectors=with_vectors,
         )
 
     @classmethod
@@ -445,6 +421,49 @@ class ArgillaMixin:
             for dataset in datasets
         ]
 
+    @staticmethod
+    def __add_vectors_settings(
+        vectors_settings: Union[List[VectorSettings], None], client: "httpx.Client", id: UUID
+    ) -> None:
+        try:
+            for vector_settings in vectors_settings or []:
+                try:
+                    datasets_api_v1.add_vector_settings(
+                        client=client,
+                        id=id,
+                        name=vector_settings.name,
+                        title=vector_settings.name,
+                        dimensions=vector_settings.dimensions,
+                    ).parsed
+                except AlreadyExistsApiError:
+                    raise ValueError(f"Vector settings with name {vector_settings.name!r} already exists.")
+        except Exception as e:
+            ArgillaMixin.__delete_dataset(client=client, id=id)
+            raise Exception(f"Failed adding vectors to the `FeedbackDataset` in Argilla with exception: {e}") from e
+
+
+def _create_argilla_dataset_or_raise(
+    httpx_client: "httpx.Client", name: str, workspace: "Workspace", dataset: "FeedbackDataset"
+) -> "FeedbackDatasetModel":
+    argilla_dataset = get_dataset_by_name_and_workspace(name=name, workspace=workspace)
+
+    if argilla_dataset is not None:
+        raise RuntimeError(
+            f"Dataset with name=`{name}` and workspace=`{workspace.name}` already exists in Argilla, please"
+            " choose another name and/or workspace."
+        )
+
+    try:
+        return datasets_api_v1.create_dataset(
+            client=httpx_client,
+            name=name,
+            workspace_id=workspace.id,
+            guidelines=dataset.guidelines,
+            allow_extra_metadata=dataset.allow_extra_metadata,
+        ).parsed
+    except Exception as e:
+        raise Exception(f"Failed while creating the `FeedbackDataset` in Argilla with exception: {e}") from e
+
 
 class TaskTemplateMixin:
     """
@@ -461,6 +480,8 @@ class TaskTemplateMixin:
         "proximal_policy_optimization"
         "direct_preference_optimization"
         "retrieval_augmented_generation"
+        "multi_modal_classification"
+        "multi_modal_transcription"
     """
 
     @classmethod
@@ -469,8 +490,9 @@ class TaskTemplateMixin:
         labels: List[str],
         multi_label: bool = False,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for text classification tasks.
@@ -480,7 +502,8 @@ class TaskTemplateMixin:
             multi_label: Set this parameter to True if you want to add multiple labels to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for text classification containing "text" field and LabelQuestion or MultiLabelQuestion named "label"
@@ -509,14 +532,16 @@ class TaskTemplateMixin:
             if multi_label
             else default_guidelines.replace("one or more labels", "one label"),
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
     def for_question_answering(
         cls: Type["FeedbackDataset"],
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for question answering tasks.
@@ -524,7 +549,8 @@ class TaskTemplateMixin:
         Args:
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for question answering containing "context" and "question" fields and a TextQuestion named "answer"
@@ -545,14 +571,16 @@ class TaskTemplateMixin:
             ],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
     def for_summarization(
         cls: Type["FeedbackDataset"],
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for summarization tasks.
@@ -560,7 +588,8 @@ class TaskTemplateMixin:
         Args:
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for summarization containing "text" field and a TextQuestion named "summary"
@@ -575,14 +604,16 @@ class TaskTemplateMixin:
             ],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
     def for_translation(
         cls: Type["FeedbackDataset"],
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for translation tasks.
@@ -590,7 +621,8 @@ class TaskTemplateMixin:
         Args:
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for translation containing "source" field and a TextQuestion named "target"
@@ -603,6 +635,7 @@ class TaskTemplateMixin:
             questions=[TextQuestion(name="target", description="Translate the text.", use_markdown=use_markdown)],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -610,8 +643,9 @@ class TaskTemplateMixin:
         cls: Type["FeedbackDataset"],
         rating_scale: int = 7,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for sentence similarity tasks.
@@ -620,7 +654,8 @@ class TaskTemplateMixin:
             rating_scale: Set this parameter to the number of similarity scale you want to add to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for sentence similarity containing "sentence1" and "sentence2" fields and a RatingQuestion named "similarity"
@@ -628,8 +663,8 @@ class TaskTemplateMixin:
         default_guidelines = "This is a sentence similarity dataset that contains two sentences. Please rate the similarity between the two sentences."
         return cls(
             fields=[
-                TextField(name="sentence1", use_markdown=use_markdown),
-                TextField(name="sentence2", use_markdown=use_markdown),
+                TextField(name="sentence-1", use_markdown=use_markdown),
+                TextField(name="sentence-2", use_markdown=use_markdown),
             ],
             questions=[
                 RatingQuestion(
@@ -640,6 +675,7 @@ class TaskTemplateMixin:
             ],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -647,8 +683,9 @@ class TaskTemplateMixin:
         cls: Type["FeedbackDataset"],
         labels: Optional[List[str]] = None,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for natural language inference tasks.
@@ -657,7 +694,8 @@ class TaskTemplateMixin:
             labels: A list of labels for your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for natural language inference containing "premise" and "hypothesis" fields and a LabelQuestion named "label"
@@ -673,6 +711,7 @@ class TaskTemplateMixin:
             questions=[LabelQuestion(name="label", labels=labels, description="Choose one of the labels.")],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -680,8 +719,9 @@ class TaskTemplateMixin:
         cls: Type["FeedbackDataset"],
         context: bool = False,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for supervised fine-tuning tasks.
@@ -690,7 +730,8 @@ class TaskTemplateMixin:
             context: Set this parameter to True if you want to add context to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for supervised fine-tuning containing "instruction" and optional "context" field and a TextQuestion named "response"
@@ -714,6 +755,7 @@ class TaskTemplateMixin:
             if context
             else default_guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -722,8 +764,9 @@ class TaskTemplateMixin:
         number_of_responses: int = 2,
         context: bool = False,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for preference tasks.
@@ -732,8 +775,9 @@ class TaskTemplateMixin:
             number_of_responses: Set this parameter to the number of responses you want to add to your dataset
             context: Set this parameter to True if you want to add context to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
-            guidelines: contains the guidelines for the dataset.
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            guidelines: Contains the guidelines for the dataset.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for preference containing "prompt", "option1" and "option2" fields and a RatingQuestion named "preference"
@@ -772,6 +816,7 @@ class TaskTemplateMixin:
             ],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -780,8 +825,9 @@ class TaskTemplateMixin:
         rating_scale: int = 7,
         context: bool = False,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for proximal policy optimization tasks.
@@ -791,7 +837,8 @@ class TaskTemplateMixin:
             context: Set this parameter to True if you want to add context to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for proximal policy optimization containing "context" and "action" fields and a LabelQuestion named "label"
@@ -812,6 +859,7 @@ class TaskTemplateMixin:
             ],
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -820,8 +868,9 @@ class TaskTemplateMixin:
         number_of_responses: int = 2,
         context: bool = False,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for direct preference optimization tasks.
@@ -830,7 +879,8 @@ class TaskTemplateMixin:
             number_of_responses: Set this parameter to the number of responses you want to add to your dataset
             context: Set this parameter to True if you want to add context to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for direct preference optimization containing "prompt", "response1", "response2" with the optional "context" fields and a RatingQuestion named "preference"
@@ -842,6 +892,7 @@ class TaskTemplateMixin:
             use_markdown=use_markdown,
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )
 
     @classmethod
@@ -850,8 +901,9 @@ class TaskTemplateMixin:
         number_of_retrievals: int = 1,
         rating_scale: int = 7,
         use_markdown: bool = False,
-        guidelines: str = None,
+        guidelines: Optional[str] = None,
         metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
     ) -> "FeedbackDataset":
         """
         You can use this method to create a basic dataset for retrieval augmented generation tasks.
@@ -861,7 +913,8 @@ class TaskTemplateMixin:
             rating_scale: Set this parameter to the number of relevancy scale you want to add to your dataset
             use_markdown: Set this parameter to True if you want to use markdown in your dataset
             guidelines: Contains the guidelines for the dataset
-            metadata_properties: contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
 
         Returns:
             A `FeedbackDataset` object for retrieval augmented generation containing "query" and "retrieved_document" fields and a TextQuestion named "response"
@@ -879,8 +932,8 @@ class TaskTemplateMixin:
 
         rating_questions = [
             RatingQuestion(
-                name="question_rating_" + str(doc + 1),
-                title="Rate the relevance of the user question" + str(doc + 1),
+                name="rating_retrieved_document_" + str(doc + 1),
+                title="Rate the relevance of the Retrieved Document " + str(doc + 1) + " for the query",
                 values=list(range(1, rating_scale + 1)),
                 description="Rate the relevance of the retrieved document.",
                 required=True if doc == 0 else False,
@@ -903,4 +956,91 @@ class TaskTemplateMixin:
             questions=total_questions,
             guidelines=default_guidelines if guidelines is None else guidelines,
             metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
+        )
+
+    @classmethod
+    def for_multi_modal_classification(
+        cls: Type["FeedbackDataset"],
+        labels: List[str],
+        multi_label: bool = False,
+        guidelines: Optional[str] = None,
+        metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
+    ) -> "FeedbackDataset":
+        """
+        You can use this method to create a basic dataset for multi-modal (video, audio,image) classification tasks.
+
+        Args:
+            labels: A list of labels for your dataset
+            multi_label: Set this parameter to True if you want to add multiple labels to your dataset
+            guidelines: Contains the guidelines for the dataset
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
+
+        Returns:
+            A `FeedbackDataset` object for multi-modal classification containing a "content" field with video, audio or image data and LabelQuestion or MultiLabelQuestion named "label"
+        """
+        default_guidelines = "This is a multi-modal classification dataset that contains videos, audios or images. Given a set of media files and a predefined set of labels, the goal of multi-modal classification is to assign one or more labels to each media file based on its content. Please classify the media file by making the correct selection."
+
+        description = "Classify the media content by selecting the correct label from the given list of labels."
+        return cls(
+            fields=[TextField(name="content", use_markdown=True, required=True)],
+            questions=[
+                LabelQuestion(
+                    name="label",
+                    labels=labels,
+                    description=description,
+                )
+                if not multi_label
+                else MultiLabelQuestion(
+                    name="label",
+                    labels=labels,
+                    description=description,
+                )
+            ],
+            guidelines=guidelines
+            if guidelines is not None
+            else default_guidelines
+            if multi_label
+            else default_guidelines.replace("one or more labels", "one label"),
+            metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
+        )
+
+    @classmethod
+    def for_multi_modal_transcription(
+        cls: Type["FeedbackDataset"],
+        guidelines: Optional[str] = None,
+        metadata_properties: List[AllowedMetadataPropertyTypes] = None,
+        vectors_settings: List[VectorSettings] = None,
+    ) -> "FeedbackDataset":
+        """
+        You can use this method to create a basic dataset for multi-modal (video, audio,image) transcription tasks.
+
+        Args:
+            use_markdown: Set this parameter to True if you want to use markdown in your TextQuestion. Defaults to `False`.
+            guidelines: Contains the guidelines for the dataset
+            metadata_properties: Contains the metadata properties that will be indexed and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: Define the configuration of the vectors associated to the records that will be used to perform the vector search. Defaults to `None`.
+
+        Returns:
+            A `FeedbackDataset` object for multi-modal transcription containing a "content" field with video, audio or image data and a TextQuestion named "description"
+        """
+        default_guidelines = "This is a multi-modal transcription dataset that contains video, audio or image data. Please describe the media content."
+        return cls(
+            fields=[
+                TextField(name="content", use_markdown=True, required=True),
+            ],
+            questions=[
+                TextQuestion(
+                    name="description",
+                    description="Provide a description of the media content, detailing the specific characteristics or elements present in each file.",
+                    use_markdown=True,
+                    required=True,
+                )
+            ],
+            guidelines=default_guidelines if guidelines is None else guidelines,
+            metadata_properties=metadata_properties,
+            vectors_settings=vectors_settings,
         )

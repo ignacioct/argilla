@@ -17,14 +17,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
-from pydantic import Field
-
+from argilla.client.feedback.schemas.enums import ResponseStatus
 from argilla.client.feedback.schemas.records import FeedbackRecord, ResponseSchema, SuggestionSchema
 from argilla.client.feedback.schemas.remote.shared import RemoteSchema
 from argilla.client.sdk.users.models import UserRole
 from argilla.client.sdk.v1.records import api as records_api_v1
 from argilla.client.sdk.v1.suggestions import api as suggestions_api_v1
 from argilla.client.utils import allowed_for_roles
+from argilla.pydantic_v1 import Field
 
 if TYPE_CHECKING:
     import httpx
@@ -94,8 +94,7 @@ class RemoteResponseSchema(ResponseSchema, RemoteSchema):
         return RemoteResponseSchema(
             user_id=payload.user_id,
             values=payload.values,
-            # TODO: Review type mismatch between API and SDK
-            status=payload.status,
+            status=ResponseStatus(payload.status),
             inserted_at=payload.inserted_at,
             updated_at=payload.updated_at,
         )
@@ -292,6 +291,7 @@ class RemoteFeedbackRecord(FeedbackRecord, RemoteSchema):
             responses=[response.to_local() for response in self.responses],
             suggestions=[suggestion.to_local() for suggestion in self.suggestions],
             metadata=self.metadata,
+            vectors=self.vectors,
             external_id=self.external_id,
         )
 
@@ -299,7 +299,7 @@ class RemoteFeedbackRecord(FeedbackRecord, RemoteSchema):
     def from_api(
         cls,
         payload: "FeedbackRecordModel",
-        question_id_to_name: Optional[Dict[UUID, str]] = None,
+        question_id_to_name: Dict[UUID, str],
         client: Optional["httpx.Client"] = None,
     ) -> "RemoteFeedbackRecord":
         return RemoteFeedbackRecord(
@@ -316,6 +316,7 @@ class RemoteFeedbackRecord(FeedbackRecord, RemoteSchema):
             if payload.suggestions
             else [],
             metadata=payload.metadata if payload.metadata else {},
+            vectors=payload.vectors if payload.vectors else {},
             external_id=payload.external_id if payload.external_id else None,
             question_name_to_id={value: key for key, value in question_id_to_name.items()},
         )

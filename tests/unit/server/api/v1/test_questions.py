@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Type
 from uuid import uuid4
 
 import pytest
-from argilla._constants import API_KEY_HEADER_NAME
+from argilla.server.constants import API_KEY_HEADER_NAME
 from argilla.server.models import DatasetStatus, Question, UserRole
-from argilla.server.schemas.v1.datasets import QUESTION_CREATE_DESCRIPTION_MAX_LENGTH, QUESTION_CREATE_TITLE_MAX_LENGTH
+from argilla.server.schemas.v1.questions import QUESTION_CREATE_DESCRIPTION_MAX_LENGTH, QUESTION_CREATE_TITLE_MAX_LENGTH
 from sqlalchemy import func, select
 
 from tests.factories import (
@@ -343,7 +343,7 @@ async def test_delete_question_without_authentication(async_client: "AsyncClient
 
     response = await async_client.delete(f"/api/v1/questions/{question.id}")
 
-    assert response.status_code == 403
+    assert response.status_code == 401
     assert (await db.execute(select(func.count(Question.id)))).scalar() == 1
 
 
@@ -357,16 +357,6 @@ async def test_delete_question_as_annotator(async_client: "AsyncClient", db: "As
     )
 
     assert response.status_code == 403
-    assert (await db.execute(select(func.count(Question.id)))).scalar() == 1
-
-
-@pytest.mark.asyncio
-async def test_delete_question_without_authentication(async_client: "AsyncClient", db: "AsyncSession"):
-    question = await TextQuestionFactory.create()
-
-    response = await async_client.delete(f"/api/v1/questions/{question.id}")
-
-    assert response.status_code == 401
     assert (await db.execute(select(func.count(Question.id)))).scalar() == 1
 
 

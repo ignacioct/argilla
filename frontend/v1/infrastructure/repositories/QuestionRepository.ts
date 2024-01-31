@@ -13,7 +13,8 @@ export class QuestionRepository {
   async getQuestions(datasetId: string): Promise<BackendQuestion[]> {
     try {
       const { data } = await this.axios.get<Response<BackendQuestion[]>>(
-        `/v1/datasets/${datasetId}/questions`
+        `/v1/datasets/${datasetId}/questions`,
+        { headers: { "cache-control": "max-age=120" } }
       );
 
       return data.items;
@@ -47,9 +48,12 @@ export class QuestionRepository {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { options, ...rest } = settings;
 
+    const newDescription =
+      description?.trim() !== "" ? description.trim() : null;
+
     return {
       title,
-      description,
+      description: newDescription,
       settings: {
         ...rest,
       },

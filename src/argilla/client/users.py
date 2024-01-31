@@ -17,7 +17,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Iterator, List, Optional, Union
 from uuid import UUID
 
-from argilla.client import active_client
 from argilla.client.sdk.commons.errors import (
     AlreadyExistsApiError,
     BaseClientError,
@@ -28,6 +27,7 @@ from argilla.client.sdk.users import api as users_api
 from argilla.client.sdk.users.models import UserModel, UserRole
 from argilla.client.sdk.v1.users import api as users_api_v1
 from argilla.client.sdk.v1.workspaces import api as workspaces_api_v1
+from argilla.client.singleton import active_client
 from argilla.client.utils import allowed_for_roles
 
 if TYPE_CHECKING:
@@ -379,8 +379,6 @@ class User:
         """
         client = cls.__active_client()
         try:
-            users = users_api.list_users(client).parsed
-            for user in users:
-                yield cls.__new_instance(client, user)
+            return [cls.__new_instance(client, user) for user in users_api.list_users(client).parsed]
         except Exception as e:
             raise RuntimeError("Error while listing the users from Argilla.") from e

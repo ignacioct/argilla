@@ -19,7 +19,6 @@ from enum import Enum
 from typing import Any, Dict, List, Union
 
 import pandas as pd
-from pydantic import BaseModel, root_validator, validator
 
 from argilla.client.feedback.schemas import (
     FeedbackRecord,
@@ -29,6 +28,7 @@ from argilla.client.feedback.schemas import (
     RatingQuestion,
     ValueSchema,
 )
+from argilla.pydantic_v1 import BaseModel, root_validator, validator
 
 
 class UnifiedValueSchema(ValueSchema):
@@ -45,15 +45,17 @@ class UnifiedValueSchema(ValueSchema):
         >>> value = {"value": "Yes", "strategy": "majority"}
     """
 
-    strategy: Union["RatingQuestionStrategy", "LabelQuestionStrategy", "MultiLabelQuestionStrategy"]
+    strategy: Union[
+        "RatingQuestionStrategy", "LabelQuestionStrategy", "MultiLabelQuestionStrategy", "RankingQuestionStrategy"
+    ]
 
 
 class RatingQuestionStrategyMixin:
-    def unify_responses(
+    def compute_unified_responses(
         self, records: List[FeedbackRecord], question: Union["RatingQuestionStrategy", "RankingQuestionStrategy"]
     ):
         """
-        The function `unify_responses` takes a list of feedback records and a rating question, and
+        The function `compute_unified_responses` takes a list of feedback records and a rating question, and
         returns a unified value based on the specified unification method.
 
         Args:
@@ -66,7 +68,7 @@ class RatingQuestionStrategyMixin:
             actual question
 
         Returns:
-        The method `unify_responses` returns the result of either the `_majority` or
+        The method `compute_unified_responses` returns the result of either the `_majority` or
         `_aggregate` method, depending on the value of `self.value`.
         """
         UnifiedValueSchema.update_forward_refs()
@@ -98,8 +100,8 @@ class RatingQuestionStrategy(RatingQuestionStrategyMixin, Enum):
     MAX: str = "max"
     MIN: str = "min"
 
-    def unify_responses(self, records: List[FeedbackRecord], question: RatingQuestion):
-        return super().unify_responses(records, question)
+    def compute_unified_responses(self, records: List[FeedbackRecord], question: RatingQuestion):
+        return super().compute_unified_responses(records, question)
 
     def _aggregate(self, records: List[FeedbackRecord], question: str):
         """
@@ -176,7 +178,7 @@ class TextQuestionStrategy(Enum):
 
     DISAGREEMENT = "disagreement"
 
-    def unify_responses(self, records: List[FeedbackRecord], question: str):
+    def compute_unified_responses(self, records: List[FeedbackRecord], question: str):
         UnifiedValueSchema.update_forward_refs()
         unified_records = []
         for rec in records:
@@ -202,7 +204,6 @@ class TextQuestionStrategy(Enum):
 class RankingQuestionStrategy(RatingQuestionStrategyMixin, Enum):
     """
     Options:
-        - "mean": the mean value of the rankings
         - "majority": the majority value of the rankings
         - "max": the max value of the rankings
         - "min": the min value of the rankings
@@ -213,8 +214,8 @@ class RankingQuestionStrategy(RatingQuestionStrategyMixin, Enum):
     MAX: str = "max"
     MIN: str = "min"
 
-    def unify_responses(self, records: List[FeedbackRecord], question: RankingQuestion):
-        return super().unify_responses(records, question)
+    def compute_unified_responses(self, records: List[FeedbackRecord], question: RankingQuestion):
+        return super().compute_unified_responses(records, question)
 
     def _aggregate(self, records: List[FeedbackRecord], question: str):
         """
@@ -232,35 +233,94 @@ class RankingQuestionStrategy(RatingQuestionStrategyMixin, Enum):
         the updated list of FeedbackRecord objects after aggregating the responses for the
         specified question.
         """
+        if self.value == self.MEAN.value:
+            return self._mean(records, question)
+
         for rec in records:
             if not rec.responses:
                 continue
             # only allow for submitted responses
             responses = [resp for resp in rec.responses if resp.status == "submitted"]
             # get responses with a value that is most frequent
-            ratings = []
+            total_values = []
+            total_ranks = []
             for resp in responses:
                 if question in resp.values:
+                    values = []
+                    ranks = []
                     for value in resp.values[question].value:
-                        ratings.append([value.value, value.rank])
-            if not ratings:
+                        values.append(value.value)
+                        ranks.append(value.rank)
+
+                    total_values.append(tuple(values))
+                    total_ranks.append(tuple(ranks))
+
+            if not total_values:
                 continue
-            df = pd.DataFrame(ratings, columns=["value", "rank"])
+            df = pd.DataFrame({"value": total_values, "rank": total_ranks})
+
             # unified response
-            if self.value == self.MEAN.value:
-                df = df.groupby("value", sort=False).mean().reset_index()
-                df = df.sort_values(by="rank", ascending=True)
-            elif self.value == self.MAX.value:
-                df = df.groupby("value", sort=False).min().reset_index()  # inverse due to higher rank better
-                df = df.sort_values(by="rank", ascending=True)
+            if self.value == self.MAX.value:
+                df = df[df["rank"] == df["rank"].max()]
             elif self.value == self.MIN.value:
-                df = df.groupby("value", sort=False).max().reset_index()  # inverse due to higher rank better
+                df = df[df["rank"] == df["rank"].min()]
             else:
                 raise ValueError("Invalid aggregation method")
-            options = df["value"].tolist()
-            if options:
-                unified_value = options[0]
-                rec._unified_responses[question] = [UnifiedValueSchema(value=unified_value, strategy=self.value)]
+
+            if len(df) > 0:
+                # Extract the first of the possible values (in case there is more than one).
+                unified_rank = [{"rank": item[1], "value": item[0]} for item in zip(*df.iloc[0].to_list())]
+                rec._unified_responses[question] = [UnifiedValueSchema(value=unified_rank, strategy=self.value)]
+
+        return records
+
+    def _mean(self, records: List[FeedbackRecord], question: str):
+        """
+        The function `_mean` takes a list of `FeedbackRecord` objects and a question, and
+        aggregates the responses for that question based on the average of the ranks.
+
+        Args:
+        - records The `records` parameter is a list of `FeedbackRecord` objects. Each
+        `FeedbackRecord` object represents a feedback record and contains information about the
+        responses given for a particular feedback.
+        - question The `question` parameter in the `_aggregate` method is a string that represents
+        the question for which the responses are being aggregated.
+
+        Returns:
+        the updated list of FeedbackRecord objects after aggregating the responses for the
+        specified question.
+        """
+        from collections import defaultdict
+
+        UnifiedValueSchema.update_forward_refs()
+
+        for rec in records:
+            if not rec.responses:
+                continue
+            # only allow for submitted responses
+            responses = [resp for resp in rec.responses if resp.status == "submitted"]
+            # Step 1: Create an empty dictionary to store cumulative ranks and counts
+            cumulative_ranks = defaultdict(lambda: {"sum": 0, "count": 0})
+
+            # Step 2: Iterate through each ranking and update cumulative ranks and counts
+            for resp in responses:
+                if question in resp.values:
+                    for item in resp.values[question].value:
+                        value = item.value
+                        rank = item.rank
+                        cumulative_ranks[value]["sum"] += rank
+                        cumulative_ranks[value]["count"] += 1
+
+            # Step 3: Calculate the average rank for each response
+            average_ranking = [
+                {"rank": round(cumulative_ranks[value]["sum"] / cumulative_ranks[value]["count"]), "value": value}
+                for value in cumulative_ranks
+            ]
+
+            # Step 4: Create a new list representing the average ranking
+            average_ranking = sorted(average_ranking, key=lambda x: x["rank"])
+            rec._unified_responses[question] = [UnifiedValueSchema(value=average_ranking, strategy=self.value)]
+
         return records
 
     def _majority(self, records: List[FeedbackRecord], question: str):
@@ -288,28 +348,39 @@ class RankingQuestionStrategy(RatingQuestionStrategyMixin, Enum):
             # only allow for submitted responses
             responses = [resp for resp in rec.responses if resp.status == "submitted"]
             # get responses with a value that is most frequent
+            ranks = []
             for resp in responses:
                 if question in resp.values:
+                    rank_per_response = []
                     for value in resp.values[question].value:
-                        counter.update([value.value] * value.rank)
+                        rank_per_response.append((value.rank, value.value))
+                    ranks.append(tuple(rank_per_response))
+
+            counter.update(ranks)
             if not counter.values():
                 continue
-            # Find the minimum count
-            min_count = min(counter.values())
-            # Get a list of values with the minimum count
-            least_common_values = [value for value, count in counter.items() if count == min_count]
-            if len(least_common_values) > 1:
-                majority_value = random.choice(least_common_values)
+            # Find the maximum count
+            max_count = max(counter.values())
+            # Get a list of values with the maximum count
+            most_common_values = [value for value, count in counter.items() if count == max_count]
+            if len(most_common_values) > 1:
+                majority_value = random.choice(most_common_values)
             else:
-                majority_value = counter.most_common()[-1][0]
-            rec._unified_responses[question] = [UnifiedValueSchema(value=majority_value, strategy=self.value)]
+                majority_value = counter.most_common()[0][0]
+
+            # Recreate the final ranking
+            majority_rank = [{"rank": item[0], "value": item[1]} for item in majority_value]
+            rec._unified_responses[question] = [UnifiedValueSchema(value=majority_rank, strategy=self.value)]
+
         return records
 
 
 class LabelQuestionStrategyMixin:
-    def unify_responses(self, records: List[FeedbackRecord], question: Union[str, LabelQuestion, MultiLabelQuestion]):
+    def compute_unified_responses(
+        self, records: List[FeedbackRecord], question: Union[str, LabelQuestion, MultiLabelQuestion]
+    ):
         """
-        The function `unify_responses` takes a list of feedback records and a question, and returns a
+        The function `compute_unified_responses` takes a list of feedback records and a question, and returns a
         unified value based on the specified unification method.
 
         Args:
@@ -320,7 +391,7 @@ class LabelQuestionStrategyMixin:
         `MultiLabelQuestion` object. It represents the question for which you want to unify the
         responses.
 
-        Returns: The method `unify_responses` returns the result of one of the following methods:
+        Returns: The method `compute_unified_responses` returns the result of one of the following methods:
         `_majority`, `_majority_weighted`, or `_disagreement`. The specific method that is called
         depends on the value of `self.value`.
         """
@@ -391,7 +462,7 @@ class LabelQuestionStrategy(LabelQuestionStrategyMixin, Enum):
     Examples:
         >>> from argilla import LabelQuestion, LabelQuestionStrategy
         >>> strategy = LabelQuestionStrategy("majority")
-        >>> records = strategy.unify_responses(records, question=LabelQuestion(...))
+        >>> records = strategy.compute_unified_responses(records, question=LabelQuestion(...))
     """
 
     MAJORITY: str = "majority"
@@ -488,7 +559,10 @@ class MultiLabelQuestionStrategy(LabelQuestionStrategyMixin, Enum):
                 if count >= majority:
                     majority_value.append(value)
 
-            rec._unified_responses[question] = [UnifiedValueSchema(value=majority_value, strategy=self.value)]
+            if not majority_value:
+                majority_value = [random.choice(list(counter.keys()))]
+
+            rec._unified_responses[question] = [UnifiedValueSchema(value=list(majority_value), strategy=self.value)]
         return records
 
     @classmethod
@@ -529,7 +603,7 @@ class RankingQuestionUnification(BaseModel):
 
     Args:
         question (RankingQuestion): ranking question
-        strategy (Union[str, RankingQuestionStrategy]): unification strategy. Defaults to "mean".
+        strategy (Union[str, RankingQuestionStrategy]): unification strategy. Defaults to "majority".
             mean (str): the mean value of the ratings.
             majority (str): the majority value of the ratings.
             max (str): the max value of the ratings
@@ -537,13 +611,13 @@ class RankingQuestionUnification(BaseModel):
 
     Examples:
         >>> from argilla import RankingQuestionUnification, RankingQuestionStrategy, RankingQuestion
-        >>> RankingQuestionUnification(question=RankingQuestion(...), strategy="mean")
+        >>> RankingQuestionUnification(question=RankingQuestion(...), strategy="majority")
         >>> # or use a RankingQuestionStrategy
-        >>> RankingQuestionUnification(question=RankingQuestion(...), strategy=RankingQuestionStrategy.MEAN)
+        >>> RankingQuestionUnification(question=RankingQuestion(...), strategy=RankingQuestionStrategy.MAJORITY)
     """
 
     question: RankingQuestion
-    strategy: Union[str, RankingQuestionStrategy] = "mean"
+    strategy: Union[str, RankingQuestionStrategy] = "majority"
 
     @validator("strategy", always=True)
     def strategy_must_be_valid(cls, v: Union[str, RankingQuestionStrategy]) -> RankingQuestionStrategy:
@@ -572,20 +646,20 @@ class LabelQuestionUnification(BaseModel):
     question: Union[LabelQuestion, MultiLabelQuestion]
     strategy: Union[str, LabelQuestionStrategy, MultiLabelQuestionStrategy] = "majority"
 
-    def unify_responses(self, records: List[FeedbackRecord]):
+    def compute_unified_responses(self, records: List[FeedbackRecord]):
         """
-        The function `unify_responses` takes a list of `FeedbackRecord` objects and returns the unified
+        The function `compute_unified_responses` takes a list of `FeedbackRecord` objects and returns the unified
         responses using a strategy and a specific question.
 
         Args:
         - records The "records" parameter is a list of FeedbackRecord objects.
 
-        Returns: The method `unify_responses` returns the result of calling the `unify_responses` method
+        Returns: The method `compute_unified_responses` returns the result of calling the `compute_unified_responses` method
         of the `strategy` object, passing in the `records` and `question` as arguments.
         """
-        return self.strategy.unify_responses(records, self.question)
+        return self.strategy.compute_unified_responses(records, self.question)
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def strategy_must_be_valid_and_align_with_question(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         strategy = values.get("strategy", "majority")
         question = values.get("question")

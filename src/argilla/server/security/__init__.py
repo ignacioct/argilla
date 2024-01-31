@@ -13,4 +13,4 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from .factory import auth
+from argilla.server.security.authentication import auth  # noqa

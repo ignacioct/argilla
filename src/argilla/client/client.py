@@ -26,11 +26,12 @@ from rich import print as rprint
 from rich.progress import Progress
 
 from argilla._constants import (
+    DATASET_NAME_REGEX_PATTERN,
     DEFAULT_API_KEY,
     DEFAULT_API_URL,
     DEFAULT_USERNAME,
-    ES_INDEX_REGEX_PATTERN,
     WORKSPACE_HEADER_NAME,
+    WORKSPACE_NAME_REGEX_PATTERN,
 )
 from argilla.client.apis.datasets import Datasets
 from argilla.client.apis.metrics import MetricsAPI
@@ -58,8 +59,13 @@ from argilla.client.sdk.datasets.models import CopyDatasetRequest, TaskType
 from argilla.client.sdk.datasets.models import Dataset as DatasetModel
 from argilla.client.sdk.metrics import api as metrics_api
 from argilla.client.sdk.metrics.models import MetricInfo
-from argilla.client.sdk.text2text.models import CreationText2TextRecord, Text2TextBulkData
-from argilla.client.sdk.text2text.models import Text2TextRecord as SdkText2TextRecord
+from argilla.client.sdk.text2text.models import (
+    CreationText2TextRecord,
+    Text2TextBulkData,
+)
+from argilla.client.sdk.text2text.models import (
+    Text2TextRecord as SdkText2TextRecord,
+)
 from argilla.client.sdk.text_classification import api as text_classification_api
 from argilla.client.sdk.text_classification.models import (
     CreationTextClassificationRecord,
@@ -67,12 +73,16 @@ from argilla.client.sdk.text_classification.models import (
     LabelingRuleMetricsSummary,
     TextClassificationBulkData,
 )
-from argilla.client.sdk.text_classification.models import TextClassificationRecord as SdkTextClassificationRecord
+from argilla.client.sdk.text_classification.models import (
+    TextClassificationRecord as SdkTextClassificationRecord,
+)
 from argilla.client.sdk.token_classification.models import (
     CreationTokenClassificationRecord,
     TokenClassificationBulkData,
 )
-from argilla.client.sdk.token_classification.models import TokenClassificationRecord as SdkTokenClassificationRecord
+from argilla.client.sdk.token_classification.models import (
+    TokenClassificationRecord as SdkTokenClassificationRecord,
+)
 from argilla.client.sdk.users import api as users_api
 from argilla.client.sdk.v1.workspaces import api as workspaces_api_v1
 from argilla.client.sdk.v1.workspaces.models import WorkspaceModel
@@ -95,6 +105,7 @@ class Argilla:
         workspace: Optional[str] = None,
         timeout: int = 120,
         extra_headers: Optional[Dict[str, str]] = None,
+        httpx_extra_kwargs: Optional[Dict[str, Any]] = None,
     ):
         """
         Inits `Argilla` instance.
@@ -114,7 +125,8 @@ class Argilla:
             timeout: Wait `timeout` seconds for the connection to timeout. Default: 60.
             extra_headers: Extra HTTP headers sent to the server. You can use this to customize
                 the headers of argilla client requests, like additional security restrictions. Default: `None`.
-
+            httpx_extra_kwargs: Extra kwargs passed to the `httpx.Client` constructor. For more information about the
+                available arguments, see https://www.python-httpx.org/api/#client. Defaults to `None`.
         """
         from argilla.client.login import ArgillaCredentials
 
@@ -146,6 +158,7 @@ class Argilla:
             token=api_key,
             timeout=timeout,
             headers=headers.copy(),
+            httpx_extra_kwargs=httpx_extra_kwargs,
         )
 
         self._user = users_api.whoami(client=self.http_client)  # .parsed
@@ -235,10 +248,10 @@ class Argilla:
         if not workspace:
             raise Exception("Must provide a workspace")
 
-        if not re.match(ES_INDEX_REGEX_PATTERN, workspace):
+        if not re.match(WORKSPACE_NAME_REGEX_PATTERN, workspace):
             raise InputValueError(
                 f"Provided workspace name {workspace} does not match the pattern"
-                f" {ES_INDEX_REGEX_PATTERN}. Please, use a valid name for your"
+                f" {WORKSPACE_NAME_REGEX_PATTERN}. Please, use a valid name for your"
                 " workspace. This limitation is caused by naming conventions for indexes"
                 " in Elasticsearch. If applicable, you can try to lowercase the name of your workspace."
                 " https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html"
@@ -250,7 +263,7 @@ class Argilla:
             else:
                 raise ValueError(f"Wrong provided workspace {workspace!r}")
 
-    def get_workspace(self) -> str:
+    def get_workspace(self) -> Optional[str]:
         """Returns the name of the active workspace.
 
         Returns:
@@ -296,6 +309,20 @@ class Argilla:
             name=dataset,
             json_body=CopyDatasetRequest(name=name_of_copy, target_workspace=workspace),
         )
+
+    def get_dataset(self, name: str, workspace: Optional[str] = None) -> DatasetModel:
+        """Gets a dataset by name.
+
+        Args:
+            name: The dataset name.
+            workspace: If provided, dataset will be retrieved from that workspace. Otherwise, the active workspace will
+                be used.
+
+        Returns:
+            A `Dataset` object containing the dataset information.
+        """
+        response = datasets_api.get_dataset(client=self.http_client, name=name, workspace=workspace)
+        return response.parsed
 
     def delete(self, name: str, workspace: Optional[str] = None):
         """Deletes a dataset.
@@ -375,10 +402,10 @@ class Argilla:
         if not name:
             raise InputValueError("Empty dataset name has been passed as argument.")
 
-        if not re.match(ES_INDEX_REGEX_PATTERN, name):
+        if not re.match(DATASET_NAME_REGEX_PATTERN, name):
             raise InputValueError(
                 f"Provided dataset name {name} does not match the pattern"
-                f" {ES_INDEX_REGEX_PATTERN}. Please, use a valid name for your"
+                f" {DATASET_NAME_REGEX_PATTERN}. Please, use a valid name for your"
                 " dataset. This limitation is caused by naming conventions for indexes"
                 " in Elasticsearch."
                 " https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html"

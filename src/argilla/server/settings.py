@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseSettings, Field, root_validator, validator
-
-from argilla._constants import DEFAULT_MAX_KEYWORD_LENGTH, DEFAULT_TELEMETRY_KEY
+from argilla.server.constants import DEFAULT_MAX_KEYWORD_LENGTH, DEFAULT_TELEMETRY_KEY
+from argilla.server.pydantic_v1 import BaseSettings, Field, root_validator, validator
 
 
 class Settings(BaseSettings):
@@ -73,8 +72,6 @@ class Settings(BaseSettings):
     elasticsearch_ca_path: Optional[str] = None
     cors_origins: List[str] = ["*"]
 
-    search_engine: str = "opensearch"
-
     docs_enabled: bool = True
 
     namespace: str = Field(default=None, regex=r"^[a-z]+$")
@@ -93,6 +90,8 @@ class Settings(BaseSettings):
     es_records_index_shards: int = 1
     es_records_index_replicas: int = 0
 
+    search_engine: str = "elasticsearch"
+
     vectors_fields_limit: int = Field(
         default=5,
         description="Max number of supported vectors per record",
@@ -110,8 +109,8 @@ class Settings(BaseSettings):
         " Values containing higher than this will be truncated",
     )
 
+    # See also the telemetry.py module
     enable_telemetry: bool = True
-
     telemetry_key: str = DEFAULT_TELEMETRY_KEY
 
     @validator("home_path", always=True)

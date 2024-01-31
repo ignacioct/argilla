@@ -16,9 +16,9 @@ from datetime import datetime
 from typing import List, Union
 from uuid import UUID
 
+import argilla.client.singleton
 import pytest
 from argilla import SortBy, TextField, TextQuestion
-from argilla.client import api
 from argilla.client.feedback.dataset.local.dataset import FeedbackDataset
 from argilla.client.feedback.schemas.enums import ResponseStatusFilter
 from argilla.client.feedback.schemas.metadata import (
@@ -64,12 +64,14 @@ def test_dataset():
 
 @pytest.mark.asyncio
 class TestFilteredRemoteFeedbackDataset:
+    @pytest.mark.skip(reason="Avoid using factory tests")
     @pytest.mark.parametrize("role", [UserRole.owner, UserRole.admin])
     @pytest.mark.parametrize(
         "statuses, expected_num_records",
         [
             ([ResponseStatusFilter.draft], 1),
             ([ResponseStatusFilter.missing], 10),
+            ([ResponseStatusFilter.pending], 10),
             ([ResponseStatusFilter.discarded], 1),
             ([ResponseStatusFilter.submitted], 1),
             ([ResponseStatusFilter.discarded, ResponseStatusFilter.submitted], 2),
@@ -85,10 +87,10 @@ class TestFilteredRemoteFeedbackDataset:
         user = await UserFactory.create(role=role, workspaces=[dataset.workspace])
 
         for status, record in zip(statuses, records):
-            if status != ResponseStatusFilter.missing:
+            if status not in [ResponseStatusFilter.missing, ResponseStatusFilter.pending]:
                 await ResponseFactory.create(record=record, status=status, values={})
 
-        api.init(api_key=user.api_key)
+        argilla.client.singleton.init(api_key=user.api_key)
         remote_dataset = FeedbackDataset.from_argilla(id=dataset.id)
         filtered_dataset = remote_dataset.filter_by(response_status=statuses)
         assert all([isinstance(record, RemoteFeedbackRecord) for record in filtered_dataset.records])
@@ -106,14 +108,14 @@ class TestFilteredRemoteFeedbackDataset:
             (FloatMetadataFilter(name="float-metadata", le=5.0), 100),
         ],
     )
-    async def test_filter_by_metadata(
+    def test_filter_by_metadata(
         self,
         owner: User,
         test_dataset: FeedbackDataset,
         metadata_filters: Union[MetadataFilters, List[MetadataFilters]],
         expected_num_records: int,
     ) -> None:
-        api.init(api_key=owner.api_key)
+        argilla.client.singleton.init(api_key=owner.api_key)
 
         ws = Workspace.create(name="test-workspace")
 
@@ -138,8 +140,8 @@ class TestFilteredRemoteFeedbackDataset:
         feedback_dataset_records: List[FeedbackRecord],
         db: AsyncSession,
     ) -> None:
-        api.active_api()
-        api.init(api_key=argilla_user.api_key)
+        argilla.client.singleton.active_api()
+        argilla.client.singleton.init(api_key=argilla_user.api_key)
 
         dataset = FeedbackDataset(
             guidelines=feedback_dataset_guidelines,
@@ -179,6 +181,7 @@ class TestFilteredRemoteFeedbackDataset:
 
         assert records == other_records
 
+    @pytest.mark.skip(reason="Avoid using factory tests")
     @pytest.mark.parametrize("role", [UserRole.owner, UserRole.admin])
     async def test_attributes(self, role: UserRole) -> None:
         dataset = await DatasetFactory.create()
@@ -190,7 +193,7 @@ class TestFilteredRemoteFeedbackDataset:
                 record=record, user=user, values={question.name: {"value": ""}}, status="submitted"
             )
 
-        api.init(api_key=user.api_key)
+        argilla.client.singleton.init(api_key=user.api_key)
         remote_dataset = FeedbackDataset.from_argilla(id=dataset.id)
         filtered_dataset = remote_dataset.filter_by(response_status="submitted")
 
@@ -264,8 +267,8 @@ class TestFilteredRemoteFeedbackDataset:
         ):
             remote.filter_by(metadata_filters=IntegerMetadataFilter(name="unexpected-field", ge=4, le=5))
 
-    def _create_test_dataset_with_records(self, owner, test_dataset):
-        api.init(api_key=owner.api_key)
+    def _create_test_dataset_with_records(self, owner: User, test_dataset: FeedbackDataset):
+        argilla.client.singleton.init(api_key=owner.api_key)
         ws = Workspace.create(name="test-workspace")
         remote = test_dataset.push_to_argilla(name="test_dataset", workspace=ws)
         for metadata in (

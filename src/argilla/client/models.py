@@ -25,10 +25,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from deprecated import deprecated
-from pydantic import BaseModel, Field, PrivateAttr, conint, constr, root_validator, validator
 
 from argilla import _messages
-from argilla._constants import _JS_MAX_SAFE_INTEGER, DEFAULT_MAX_KEYWORD_LENGTH, PROTECTED_METADATA_FIELD_PREFIX
+from argilla._constants import DEFAULT_MAX_KEYWORD_LENGTH
+from argilla.pydantic_v1 import BaseModel, Field, PrivateAttr, root_validator, validator
 from argilla.utils.span_utils import SpanUtils
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,7 +46,6 @@ FRAMEWORK_TO_NAME_MAPPING = {
     "spark-nlp": "Spark NLP John Snow Labs library",
     "openai": "OpenAI LLMs",
     "trl": "Transformer Reinforcement Learning",
-    "trlx": "Transformer Reinforcement Learning X",
     "sentence-transformers": "Sentence Transformers library",
 }
 
@@ -64,7 +63,6 @@ class Framework(Enum):
         spark-nlp: Spark NLP John Snow Labs library
         openai: OpenAI LLMs
         trl: Transformer Reinforcement Learning
-        trlx: Transformer Reinforcement Learning X
         sentence-transformers: Sentence Transformers library
     """
 
@@ -77,7 +75,6 @@ class Framework(Enum):
     SPARK_NLP = "spark-nlp"
     OPENAI = "openai"
     TRL = "trl"
-    TRLX = "trlx"
     SENTENCE_TRANSFORMERS = "sentence-transformers"
     # AUTOTRAIN = "autotrain"
 
@@ -94,6 +91,11 @@ class Framework(Enum):
 class _Validators(BaseModel):
     """Base class for our record models that takes care of general validations"""
 
+    # The metadata field name prefix defined for protected (non-searchable) values
+    _PROTECTED_METADATA_FIELD_PREFIX = "_"
+
+    _JS_MAX_SAFE_INTEGER = 9007199254740991
+
     @validator("metadata", check_fields=False)
     def _check_value_length(cls, metadata):
         """Checks metadata values length and warn message for large values"""
@@ -102,7 +104,7 @@ class _Validators(BaseModel):
 
         default_length_exceeded = False
         for k, v in metadata.items():
-            if k.startswith(PROTECTED_METADATA_FIELD_PREFIX):
+            if k.startswith(cls._PROTECTED_METADATA_FIELD_PREFIX):
                 continue
             if isinstance(v, str) and len(v) > DEFAULT_MAX_KEYWORD_LENGTH:
                 default_length_exceeded = True
@@ -130,14 +132,14 @@ class _Validators(BaseModel):
             return str(uuid.uuid4())
         if isinstance(v, int):
             message = (
-                f"Integer ids won't be supported in future versions. We recommend to start using strings instead. "
+                "Integer ids won't be supported in future versions. We recommend to start using strings instead. "
                 "For datasets already containing integer values we recommend migrating them to avoid deprecation issues. "
                 "See https://docs.argilla.io/en/latest/getting_started/installation/configurations"
                 "/database_migrations.html#elasticsearch"
             )
             warnings.warn(message, DeprecationWarning, stacklevel=2)
             # See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER
-            if v > _JS_MAX_SAFE_INTEGER:
+            if v > cls._JS_MAX_SAFE_INTEGER:
                 message = (
                     "You've provided a big integer value. Use a string instead, otherwise you may experience some "
                     "problems using the UI. See "
@@ -179,7 +181,7 @@ class _Validators(BaseModel):
 
         return v
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def _check_and_update_status(cls, values):
         """Updates the status if an annotation is provided and no status is specified."""
         values["status"] = values.get("status") or ("Default" if values.get("annotation") is None else "Validated")
@@ -308,7 +310,7 @@ class TextClassificationRecord(_Validators):
     metrics: Optional[Dict[str, Any]] = None
     search_keywords: Optional[List[str]] = None
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def _check_text_and_inputs(cls, values):
         """Check if either text or inputs were provided. Copy text to inputs."""
         if isinstance(values.get("inputs"), str):

@@ -11,21 +11,39 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
+import dataclasses
 from abc import ABCMeta, abstractmethod
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, ClassVar, Dict, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    ClassVar,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+)
 from uuid import UUID
 
-from pydantic import BaseModel, Field, root_validator
-from pydantic.generics import GenericModel
-
-from argilla.server.enums import MetadataPropertyType, RecordSortField, ResponseStatusFilter, SortOrder
-from argilla.server.models import Dataset, MetadataProperty, Record, Response, User
+from argilla.server.enums import (
+    MetadataPropertyType,
+    RecordSortField,
+    ResponseStatus,
+    ResponseStatusFilter,
+    SimilarityOrder,
+    SortOrder,
+)
+from argilla.server.models import Dataset, MetadataProperty, Record, Response, Suggestion, User, Vector, VectorSettings
+from argilla.server.pydantic_v1 import BaseModel, Field, root_validator
+from argilla.server.pydantic_v1.generics import GenericModel
 
 __all__ = [
     "SearchEngine",
-    "StringQuery",
+    "TextQuery",
     "MetadataFilter",
     "TermsMetadataFilter",
     "IntegerMetadataFilter",
@@ -38,10 +56,73 @@ __all__ = [
     "TermsMetadataMetrics",
     "IntegerMetadataMetrics",
     "FloatMetadataMetrics",
+    "SuggestionFilterScope",
+    "ResponseFilterScope",
+    "MetadataFilterScope",
+    "RecordFilterScope",
+    "FilterScope",
+    "TermsFilter",
+    "RangeFilter",
+    "AndFilter",
+    "Filter",
+    "Order",
 ]
 
 
-class StringQuery(BaseModel):
+@dataclasses.dataclass
+class SuggestionFilterScope:
+    question: str
+    property: str
+
+
+@dataclasses.dataclass
+class ResponseFilterScope:
+    question: Optional[str] = None
+    property: Optional[str] = None
+    user: Optional[User] = None
+
+
+@dataclasses.dataclass
+class MetadataFilterScope:
+    metadata_property: str
+
+
+@dataclasses.dataclass
+class RecordFilterScope:
+    property: str
+
+
+FilterScope = Union[SuggestionFilterScope, ResponseFilterScope, MetadataFilterScope, RecordFilterScope]
+
+
+@dataclasses.dataclass
+class TermsFilter:
+    scope: FilterScope
+    values: List[str]
+
+
+@dataclasses.dataclass
+class RangeFilter:
+    scope: FilterScope
+    ge: Optional[float] = None
+    le: Optional[float] = None
+
+
+@dataclasses.dataclass
+class AndFilter:
+    filters: List["Filter"]
+
+
+Filter = Union[AndFilter, TermsFilter, RangeFilter]
+
+
+@dataclasses.dataclass
+class Order:
+    scope: FilterScope
+    order: SortOrder
+
+
+class TextQuery(BaseModel):
     q: str
     field: Optional[str] = None
 
@@ -52,6 +133,18 @@ class UserResponseStatusFilter(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    @property
+    def response_statuses(self) -> List[ResponseStatus]:
+        return [
+            status.value
+            for status in self.statuses
+            if status not in [ResponseStatusFilter.pending, ResponseStatusFilter.missing]
+        ]
+
+    @property
+    def has_pending_status(self) -> bool:
+        return ResponseStatusFilter.pending in self.statuses or ResponseStatusFilter.missing in self.statuses
 
 
 class MetadataFilter(BaseModel):
@@ -88,7 +181,7 @@ class NumericMetadataFilter(GenericModel, Generic[NT], MetadataFilter):
 
     _json_model: ClassVar[Type[_RangeModel]]
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def check_bounds(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         ge = values.get("ge")
         le = values.get("le")
@@ -138,7 +231,7 @@ class TermsMetadataMetrics(BaseModel):
         term: str
         count: int
 
-    type: MetadataPropertyType = Field(MetadataPropertyType.terms, const=True)
+    type: MetadataPropertyType = Field(MetadataPropertyType.terms)
     total: int
     values: List[TermCount] = Field(default_factory=list)
 
@@ -149,11 +242,11 @@ class NumericMetadataMetrics(GenericModel, Generic[NT]):
 
 
 class IntegerMetadataMetrics(NumericMetadataMetrics[int]):
-    type: MetadataPropertyType = Field(MetadataPropertyType.integer, const=True)
+    type: MetadataPropertyType = Field(MetadataPropertyType.integer)
 
 
 class FloatMetadataMetrics(NumericMetadataMetrics[float]):
-    type: MetadataPropertyType = Field(MetadataPropertyType.float, const=True)
+    type: MetadataPropertyType = Field(MetadataPropertyType.float)
 
 
 MetadataMetrics = Union[TermsMetadataMetrics, IntegerMetadataMetrics, FloatMetadataMetrics]
@@ -229,19 +322,56 @@ class SearchEngine(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    async def update_record_suggestion(self, suggestion: Suggestion):
+        pass
+
+    @abstractmethod
+    async def delete_record_suggestion(self, suggestion: Suggestion):
+        pass
+
+    @abstractmethod
     async def search(
         self,
         dataset: Dataset,
-        query: Optional[Union[StringQuery, str]] = None,
-        # TODO(@frascuchon): The search records method should receive a generic list of filters
+        query: Optional[Union[TextQuery, str]] = None,
+        filter: Optional[Filter] = None,
+        sort: Optional[List[Order]] = None,
+        # TODO: remove them and keep filter and order
         user_response_status_filter: Optional[UserResponseStatusFilter] = None,
         metadata_filters: Optional[List[MetadataFilter]] = None,
+        sort_by: Optional[List[SortBy]] = None,
+        # END TODO
         offset: int = 0,
         limit: int = 100,
-        sort_by: Optional[List[SortBy]] = None,
     ) -> SearchResponses:
         pass
 
     @abstractmethod
     async def compute_metrics_for(self, metadata_property: MetadataProperty) -> MetadataMetrics:
+        pass
+
+    async def configure_index_vectors(self, vector_settings: VectorSettings):
+        pass
+
+    @abstractmethod
+    async def set_records_vectors(self, dataset: Dataset, vectors: Iterable[Vector]):
+        pass
+
+    @abstractmethod
+    async def similarity_search(
+        self,
+        dataset: Dataset,
+        vector_settings: VectorSettings,
+        value: Optional[List[float]] = None,
+        record: Optional[Record] = None,
+        query: Optional[Union[TextQuery, str]] = None,
+        filter: Optional[Filter] = None,
+        # TODO: remove them and keep filter
+        user_response_status_filter: Optional[UserResponseStatusFilter] = None,
+        metadata_filters: Optional[List[MetadataFilter]] = None,
+        # END TODO
+        max_results: int = 100,
+        order: SimilarityOrder = SimilarityOrder.most_similar,
+        threshold: Optional[float] = None,
+    ) -> SearchResponses:
         pass

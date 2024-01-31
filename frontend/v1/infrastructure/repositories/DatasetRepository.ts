@@ -1,5 +1,9 @@
 import { type NuxtAxiosInstance } from "@nuxtjs/axios";
 import { Store } from "vuex";
+import {
+  BackendDatasetFeedbackTaskResponse,
+  BackendUpdateDataset,
+} from "../types/dataset";
 import { Dataset } from "@/v1/domain/entities/Dataset";
 import { IDatasetRepository } from "@/v1/domain/services/IDatasetRepository";
 
@@ -11,17 +15,6 @@ export const DATASET_API_ERRORS = {
   ERROR_PATCHING_DATASET_GUIDELINES: "ERROR_PATCHING_DATASET_GUIDELINES",
   ERROR_DELETING_DATASET: "ERROR_DELETING_DATASET",
 };
-
-interface BackendDatasetFeedbackTaskResponse {
-  guidelines: string;
-  id: string;
-  inserted_at: string;
-  name: string;
-  status: string;
-  updated_at: string;
-  last_activity_at: string;
-  workspace_id: string;
-}
 
 export class DatasetRepository implements IDatasetRepository {
   constructor(
@@ -44,7 +37,8 @@ export class DatasetRepository implements IDatasetRepository {
       {},
       dataset.inserted_at,
       dataset.updated_at,
-      dataset.last_activity_at
+      dataset.last_activity_at,
+      dataset.allow_extra_metadata
     );
   }
 
@@ -63,7 +57,8 @@ export class DatasetRepository implements IDatasetRepository {
         dataset.tags,
         dataset.created_at,
         dataset.last_updated,
-        dataset.last_updated
+        dataset.last_updated,
+        false
       );
     });
 
@@ -80,7 +75,8 @@ export class DatasetRepository implements IDatasetRepository {
           {},
           datasetFromBackend.inserted_at,
           datasetFromBackend.updated_at,
-          datasetFromBackend.last_activity_at
+          datasetFromBackend.last_activity_at,
+          datasetFromBackend.allow_extra_metadata
         );
       }
     );
@@ -88,14 +84,17 @@ export class DatasetRepository implements IDatasetRepository {
     return [...otherDatasets, ...feedbackDatasets];
   }
 
-  async update(dataset: Dataset) {
+  async update({ id, allowExtraMetadata, guidelines }: Dataset) {
+    const request: BackendUpdateDataset = {
+      allow_extra_metadata: allowExtraMetadata,
+      guidelines: guidelines?.trim() !== "" ? guidelines.trim() : null,
+    };
+
     try {
       const { data } =
         await this.axios.patch<BackendDatasetFeedbackTaskResponse>(
-          `/v1/datasets/${dataset.id}`,
-          {
-            guidelines: dataset.guidelines,
-          }
+          `/v1/datasets/${id}`,
+          request
         );
 
       return {

@@ -12,8 +12,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import datetime
 import inspect
+import random
 
 import factory
 from argilla.server.enums import FieldType, MetadataPropertyType
@@ -28,6 +28,8 @@ from argilla.server.models import (
     Suggestion,
     User,
     UserRole,
+    Vector,
+    VectorSettings,
     Workspace,
     WorkspaceUser,
 )
@@ -171,7 +173,7 @@ class UserFactory(BaseFactory):
     first_name = factory.Faker("first_name")
     username = factory.Sequence(lambda n: f"username-{n}")
     api_key = factory.Sequence(lambda n: f"api-key-{n}")
-    password_hash = "$2y$05$eaw.j2Kaw8s8vpscVIZMfuqSIX3OLmxA21WjtWicDdn0losQ91Hw."
+    password_hash = "$2y$05$eaw.j2Kaw8s8vpscVIZMfuqSIX3OLmxA21WjtWicDdn0losQ91Hw."  # 12345678
 
 
 class UserSyncFactory(BaseSyncFactory):
@@ -222,6 +224,24 @@ class ResponseFactory(BaseFactory):
 
     record = factory.SubFactory(RecordFactory)
     user = factory.SubFactory(UserFactory)
+
+
+class VectorSettingsFactory(BaseFactory):
+    class Meta:
+        model = VectorSettings
+
+    name = factory.Sequence(lambda n: f"vector-{n}")
+    title = "Vector Title"
+    dimensions = factory.LazyAttribute(lambda _: random.randrange(16, 1024))
+    dataset = factory.SubFactory(DatasetFactory)
+
+
+class VectorFactory(BaseFactory):
+    class Meta:
+        model = Vector
+
+    record = factory.SubFactory(RecordFactory)
+    vector_settings = factory.SubFactory(VectorSettingsFactory)
 
 
 class FieldFactory(BaseFactory):

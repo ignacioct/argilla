@@ -11,16 +11,18 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
+import secrets
 from typing import TYPE_CHECKING, List, Union
 from uuid import UUID
 
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, selectinload
 
+from argilla.server.enums import UserRole
 from argilla.server.models import User, Workspace, WorkspaceUser
-from argilla.server.security.model import UserCreate, WorkspaceCreate, WorkspaceUserCreate
+from argilla.server.schemas.v0.users import UserCreate
+from argilla.server.schemas.v0.workspaces import WorkspaceCreate, WorkspaceUserCreate
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,6 +87,10 @@ async def get_user_by_id(db: "AsyncSession", user_id: UUID) -> Union[User, None]
     return await User.read(db, id=user_id)
 
 
+async def user_exists(db: "AsyncSession", user_id: UUID) -> bool:
+    return await db.scalar(select(exists().where(User.id == user_id)))
+
+
 def get_user_by_username_sync(db: Session, username: str) -> Union[User, None]:
     return db.query(User).filter_by(username=username).first()
 
@@ -137,11 +143,26 @@ async def create_user(db: "AsyncSession", user_create: UserCreate) -> User:
     return user
 
 
+async def create_user_with_random_password(
+    db,
+    username: str,
+    first_name: str,
+    workspaces: List[str] = None,
+    role: UserRole = UserRole.annotator,
+) -> User:
+    password = _generate_random_password()
+
+    user_create = UserCreate(
+        first_name=first_name, username=username, role=role, password=password, workspaces=workspaces
+    )
+    return await create_user(db, user_create)
+
+
 async def delete_user(db: "AsyncSession", user: User) -> User:
     return await user.delete(db)
 
 
-async def authenticate_user(db: Session, username: str, password: str):
+async def authenticate_user(db: "AsyncSession", username: str, password: str):
     user = await get_user_by_username(db, username)
 
     if user and verify_password(password, user.password_hash):
@@ -158,3 +179,7 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return _CRYPT_CONTEXT.verify(password, password_hash)
+
+
+def _generate_random_password() -> str:
+    return secrets.token_urlsafe()

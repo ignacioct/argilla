@@ -19,9 +19,13 @@
   <div v-if="options.length">
     <BaseDropdown :visible="dropdownIsVisible" @visibility="onVisibility">
       <span slot="dropdown-header">
-        <BaseButton class="selected-option" :class="currentOptionId">
+        <BaseButton
+          class="selected-option"
+          :class="currentOptionId"
+          :data-title="$t('status')"
+        >
           {{ currentOptionName }}
-          <svgicon name="chevron-down" />
+          <svgicon name="chevron-down" width="8" height="8" />
         </BaseButton>
       </span>
       <span slot="dropdown-content">
@@ -100,9 +104,11 @@ export default {
         case "discarded":
           return "#B7B7B7";
         case "pending":
-          return "#B6B9FF";
+          return "#BB720A";
         case "submitted":
           return "#3E5CC9";
+        case "draft":
+          return "#73BFBD";
       }
     },
   },
@@ -110,14 +116,14 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-$selector-width: 160px;
+$selector-width: 140px;
 .options {
   display: flex;
   flex-direction: column;
   gap: calc($base-space / 2);
-  min-width: $selector-width;
-  padding: calc($base-space / 2);
+  padding: $base-space;
   margin: 0;
+  width: $selector-width;
   list-style: none;
 }
 .option {
@@ -129,19 +135,25 @@ $selector-width: 160px;
   &.discarded {
     &:hover,
     &:focus-within {
-      background: #f2f2f2;
+      background: lighten($discarded-color, 30%);
     }
   }
   &.submitted {
     &:hover,
     &:focus-within {
-      background: #ebf3ff;
+      background: lighten($submitted-color, 44%);
     }
   }
   &.pending {
     &:hover,
     &:focus-within {
-      background: #eeeeff;
+      background: lighten($pending-color, 54%);
+    }
+  }
+  &.draft {
+    &:hover,
+    &:focus-within {
+      background: lighten($draft-color, 56%);
     }
   }
   &__radio {
@@ -152,31 +164,38 @@ $selector-width: 160px;
   }
 }
 .button.selected-option {
-  min-width: $selector-width;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: $base-space + 4px;
+  gap: $base-space;
+  padding: $base-space;
   background: palette(white);
+  @include font-size(14px);
   &.discarded {
-    color: #656363;
-    border: 1px solid #b7b7b7;
+    color: $black-54;
+    border: 1px solid $discarded-color;
     &:before {
-      background: #b7b7b7;
+      background: $discarded-color;
     }
   }
   &.submitted {
-    color: #3e5cc9;
-    border: 1px solid #3e5cc9;
+    color: $submitted-color;
+    border: 1px solid $submitted-color;
     &:before {
-      background: #3e5cc9;
+      background: $submitted-color;
     }
   }
   &.pending {
-    color: #4c4ea3;
-    border: 1px solid #b6b9ff;
+    color: $pending-color;
+    border: 1px solid $pending-color;
     &:before {
-      background: #b6b9ff;
+      background: $pending-color;
+    }
+  }
+  &.draft {
+    color: $draft-color;
+    border: 1px solid $draft-color;
+    &:before {
+      background: $draft-color;
     }
   }
   .svg-icon {
@@ -188,5 +207,10 @@ $selector-width: 160px;
     width: $base-space;
     border-radius: 50%;
   }
+}
+
+[data-title] {
+  overflow: visible;
+  @include tooltip-mini("top");
 }
 </style>

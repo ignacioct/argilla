@@ -8,6 +8,8 @@
           :datasetId="datasetId"
           :breadcrumbs="breadcrumbs"
           :showTrainButton="true"
+          :showSettingButton="true"
+          :showCopyButton="true"
           @on-click-train="showTrainModal(true)"
         />
         <BaseModal
@@ -32,18 +34,10 @@
           @refresh="refresh()"
         />
       </template>
-      <template v-slot:top>
-        <section class="dataset__top-area">
-          <DatasetFiltersComponent :recordCriteria="recordCriteria" />
-        </section>
-      </template>
       <template v-slot:center>
         <RecordFeedbackTaskAndQuestionnaireContent
           :recordCriteria="recordCriteria"
         />
-      </template>
-      <template v-slot:footer>
-        <PaginationFeedbackTaskComponent :recordCriteria="recordCriteria" />
       </template>
     </HeaderAndTopAndOneColumn>
   </div>
@@ -82,13 +76,3 @@ export default {
   },
 };
 </script>
-
-<style lang="scss" scoped>
-.dataset {
-  &__top-area {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-}
-</style>

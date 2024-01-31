@@ -15,23 +15,18 @@
 import logging
 import textwrap
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from argilla.client.feedback.constants import FETCHING_BATCH_SIZE
-from argilla.client.feedback.dataset.base import FeedbackDatasetBase
+from argilla.client.feedback.dataset import helpers
+from argilla.client.feedback.dataset.base import FeedbackDatasetBase, R
 from argilla.client.feedback.dataset.local.mixins import ArgillaMixin, TaskTemplateMixin
+from argilla.client.feedback.dataset.mixins import MetricsMixin, UnificationMixin
 from argilla.client.feedback.integrations.huggingface.dataset import HuggingFaceDatasetMixin
 from argilla.client.feedback.schemas.enums import RecordSortField, SortOrder
-from argilla.client.feedback.schemas.questions import (
-    LabelQuestion,
-    MultiLabelQuestion,
-    RankingQuestion,
-    RatingQuestion,
-    TextQuestion,
-)
 from argilla.client.feedback.schemas.records import FeedbackRecord
-from argilla.client.feedback.schemas.types import AllowedQuestionTypes
-from argilla.client.feedback.training.schemas import (
+from argilla.client.feedback.schemas.vector_settings import VectorSettings
+from argilla.client.feedback.training.schemas.base import (
     TrainingTaskForChatCompletion,
     TrainingTaskForDPO,
     TrainingTaskForPPO,
@@ -42,15 +37,7 @@ from argilla.client.feedback.training.schemas import (
     TrainingTaskForTextClassification,
     TrainingTaskTypes,
 )
-from argilla.client.feedback.unification import (
-    LabelQuestionStrategy,
-    MultiLabelQuestionStrategy,
-    RankingQuestionStrategy,
-    RatingQuestionStrategy,
-    TextQuestionStrategy,
-)
 from argilla.client.models import Framework
-from argilla.utils.dependency import require_dependencies
 
 if TYPE_CHECKING:
     from argilla.client.feedback.schemas.types import (
@@ -63,13 +50,21 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase[FeedbackRecord], TaskTemplateMixin):
+class FeedbackDataset(
+    ArgillaMixin,
+    HuggingFaceDatasetMixin,
+    FeedbackDatasetBase[FeedbackRecord],
+    TaskTemplateMixin,
+    MetricsMixin,
+    UnificationMixin,
+):
     def __init__(
         self,
         *,
         fields: List["AllowedFieldTypes"],
         questions: List["AllowedQuestionTypes"],
         metadata_properties: Optional[List["AllowedMetadataPropertyTypes"]] = None,
+        vectors_settings: Optional[List[VectorSettings]] = None,
         guidelines: Optional[str] = None,
         allow_extra_metadata: bool = True,
     ) -> None:
@@ -80,6 +75,9 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
             questions: contains the questions that will be used to annotate the dataset.
             metadata_properties: contains the metadata properties that will be indexed
                 and could be used to filter the dataset. Defaults to `None`.
+            vectors_settings: contains the vectors settings that will define the configuration
+                of the vectors associated to the records in the dataset and that would
+                allow to perform vector search. Defaults to `None`.
             guidelines: contains the guidelines for annotating the dataset. Defaults to `None`.
             allow_extra_metadata: whether to allow extra metadata that has not been defined
                 as a metadata property in the records. Defaults to `True`.
@@ -131,7 +129,7 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
             ...             name="metadata-property-1",
             ...             values=["a", "b", "c"]
             ...         ),
-            ...         rg.IntMetadataProperty(
+            ...         rg.IntegerMetadataProperty(
             ...             name="metadata-property-2",
             ...             gt=0,
             ...             lt=10,
@@ -145,15 +143,59 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
             ...     guidelines="These are the annotation guidelines.",
             ... )
         """
-        super().__init__(
-            fields=fields,
-            questions=questions,
-            metadata_properties=metadata_properties,
-            guidelines=guidelines,
-            allow_extra_metadata=allow_extra_metadata,
-        )
 
+        helpers.validate_fields(fields)
+        helpers.validate_questions(questions)
+        helpers.validate_metadata_properties(metadata_properties)
+
+        if guidelines is not None:
+            if not isinstance(guidelines, str):
+                raise TypeError(
+                    f"Expected `guidelines` to be either None (default) or a string, got {type(guidelines)} instead."
+                )
+            if len(guidelines) < 1:
+                raise ValueError(
+                    "Expected `guidelines` to be either None (default) or a non-empty string, minimum length is 1."
+                )
+
+        self._fields = fields or []
+        self._questions = questions or []
+        self._metadata_properties = metadata_properties or []
+        self._guidelines = guidelines
+        self._allow_extra_metadata = allow_extra_metadata
+
+        if vectors_settings:
+            self._vectors_settings = {vector_setting.name: vector_setting for vector_setting in vectors_settings}
+        else:
+            self._vectors_settings: Dict[str, VectorSettings] = {}
         self._records = []
+
+    @property
+    def guidelines(self) -> Optional[str]:
+        return self._guidelines
+
+    @property
+    def allow_extra_metadata(self) -> bool:
+        return self._allow_extra_metadata
+
+    @property
+    def fields(self) -> Union[List["AllowedFieldTypes"]]:
+        return self._fields
+
+    @property
+    def questions(self) -> Union[List["AllowedQuestionTypes"]]:
+        return self._questions
+
+    @property
+    def metadata_properties(
+        self,
+    ) -> Union[List["AllowedMetadataPropertyTypes"]]:
+        return self._metadata_properties
+
+    @property
+    def vectors_settings(self) -> List["VectorSettings"]:
+        """Returns the vector settings of the dataset."""
+        return [v for v in self._vectors_settings.values()]
 
     @property
     def records(self) -> List["FeedbackRecord"]:
@@ -162,11 +204,14 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
 
     def __repr__(self) -> str:
         """Returns a string representation of the dataset."""
+        indent = "   "
         return (
             "FeedbackDataset("
-            + textwrap.indent(
-                f"\nfields={self.fields}\nquestions={self.questions}\nguidelines={self.guidelines})", "    "
-            )
+            + textwrap.indent(f"\nfields={self.fields}", indent)
+            + textwrap.indent(f"\nquestions={self.questions}", indent)
+            + textwrap.indent(f"\nguidelines={self.guidelines})", indent)
+            + textwrap.indent(f"\nmetadata_properties={self.metadata_properties})", indent)
+            + textwrap.indent(f"\nvectors_settings={self.vectors_settings})", indent)
             + "\n)"
         )
 
@@ -220,8 +265,8 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
                 list of dictionaries as a record or dictionary as a record.
             ValueError: if the given records do not match the expected schema.
         """
-        records = self._parse_records(records)
-        self._validate_records(records)
+        records = helpers.normalize_records(records)
+        helpers.validate_dataset_records(self, records)
 
         if len(self._records) > 0:
             self._records += records
@@ -246,6 +291,62 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
         self._unique_metadata_property(metadata_property)
         self._metadata_properties.append(metadata_property)
         return metadata_property
+
+    def add_vector_settings(self, vector_settings: VectorSettings) -> VectorSettings:
+        if self._vectors_settings.get(vector_settings.name):
+            raise ValueError(f"Vector settings with name '{vector_settings.name}' already exists in the dataset.")
+
+        self._vectors_settings[vector_settings.name] = vector_settings
+        return vector_settings
+
+    def update_vectors_settings(self, vectors_settings: Union[VectorSettings, List[VectorSettings]]) -> None:
+        """Does nothing because the `vector_settings` are updated automatically for
+        `FeedbackDataset` datasets when assigning their updateable attributes to a new value.
+        """
+        warnings.warn(
+            "`update_vectors_settings` method is not supported for `FeedbackDataset` datasets"
+            " unless its pushed to Argilla i.e. `RemoteFeedbackDataset`. This is because the"
+            " `vector_settings` updates are already applied via assignment if any. So,"
+            " this method is not required locally.",
+            UserWarning,
+            stacklevel=1,
+        )
+
+    def delete_vectors_settings(
+        self, vectors_settings: Union[str, List[str]]
+    ) -> Union[VectorSettings, List[VectorSettings]]:
+        """Deletes the given vector settings from the dataset.
+
+        Args:
+            vectors_settings: the name/s of the vector settings to delete.
+
+        Returns:
+            The vector settings that were deleted.
+
+        Raises:
+            ValueError: if the provided `vectors_settings` is/are not in the dataset.
+        """
+        if isinstance(vectors_settings, str):
+            vectors_settings = [vectors_settings]
+
+        if not self.vectors_settings:
+            raise ValueError(
+                "The current `FeedbackDataset` does not contain any `vectors_settings` defined, so"
+                " none can be deleted."
+            )
+
+        if not all(vector_setting in self._vectors_settings.keys() for vector_setting in vectors_settings):
+            raise ValueError(
+                f"Invalid `vectors_settings={vectors_settings}` provided. It cannot be"
+                " deleted because it does not exist, make sure you delete just existing `vectors_settings`"
+                " meaning that the name matches any of the existing `vectors_settings` if any. Current"
+                f" `vectors_settings` are: '{', '.join(self._vectors_settings.keys())}'."
+            )
+
+        deleted_vectors_settings = []
+        for vector_setting in vectors_settings:
+            deleted_vectors_settings.append(self._vectors_settings.pop(vector_setting))
+        return deleted_vectors_settings if len(deleted_vectors_settings) > 1 else deleted_vectors_settings[0]
 
     def update_metadata_properties(
         self,
@@ -305,44 +406,6 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
         self._metadata_properties = list(metadata_properties_mapping.values())
         return deleted_metadata_properties if len(deleted_metadata_properties) > 1 else deleted_metadata_properties[0]
 
-    def unify_responses(
-        self: "FeedbackDatasetBase",
-        question: Union[str, LabelQuestion, MultiLabelQuestion, RatingQuestion],
-        strategy: Union[
-            str, LabelQuestionStrategy, MultiLabelQuestionStrategy, RatingQuestionStrategy, RankingQuestionStrategy
-        ],
-    ) -> "FeedbackDataset":
-        """
-        The `unify_responses` function takes a question and a strategy as input and applies the strategy
-        to unify the responses for that question.
-
-        Args:
-            question The `question` parameter can be either a string representing the name of the
-                question, or an instance of one of the question classes (`LabelQuestion`, `MultiLabelQuestion`,
-                `RatingQuestion`, `RankingQuestion`).
-            strategy The `strategy` parameter is used to specify the strategy to be used for unifying
-                responses for a given question. It can be either a string or an instance of a strategy class.
-        """
-        if isinstance(question, str):
-            question = self.question_by_name(question)
-
-        if isinstance(strategy, str):
-            if isinstance(question, LabelQuestion):
-                strategy = LabelQuestionStrategy(strategy)
-            elif isinstance(question, MultiLabelQuestion):
-                strategy = MultiLabelQuestionStrategy(strategy)
-            elif isinstance(question, RatingQuestion):
-                strategy = RatingQuestionStrategy(strategy)
-            elif isinstance(question, RankingQuestion):
-                strategy = RankingQuestionStrategy(strategy)
-            elif isinstance(question, TextQuestion):
-                strategy = TextQuestionStrategy(strategy)
-            else:
-                raise ValueError(f"Question {question} is not supported yet")
-
-        strategy.unify_responses(self.records, question)
-        return self
-
     # TODO(alvarobartt,davidberenstein1957): we should consider having something like
     # `export(..., training=True)` to export the dataset records in any format, replacing
     # both `format_as` and `prepare_for_training`
@@ -398,12 +461,12 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
             if task.formatting_func is None:
                 # in sentence-transformer models we can train without labels
                 if task.label:
-                    local_dataset = local_dataset.unify_responses(
+                    local_dataset = local_dataset.compute_unified_responses(
                         question=task.label.question, strategy=task.label.strategy
                     )
         elif isinstance(task, TrainingTaskForQuestionAnswering):
             if task.formatting_func is None:
-                local_dataset = self.unify_responses(question=task.answer.name, strategy="disagreement")
+                local_dataset = self.compute_unified_responses(question=task.answer.name, strategy="disagreement")
         elif not isinstance(
             task,
             (
@@ -416,43 +479,7 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
         ):
             raise ValueError(f"Training data {type(task)} is not supported yet")
 
-        data = task._format_data(local_dataset)
-        if framework in [
-            Framework.TRANSFORMERS,
-            Framework.SETFIT,
-            Framework.SPAN_MARKER,
-            Framework.PEFT,
-        ]:
-            return task._prepare_for_training_with_transformers(
-                data=data, train_size=train_size, seed=seed, framework=framework
-            )
-        elif framework in [Framework.SPACY, Framework.SPACY_TRANSFORMERS]:
-            require_dependencies("spacy")
-            import spacy
-
-            if lang is None:
-                _LOGGER.warning("spaCy `lang` is not provided. Using `en`(English) as default language.")
-                lang = spacy.blank("en")
-            elif lang.isinstance(str):
-                if len(lang) == 2:
-                    lang = spacy.blank(lang)
-                else:
-                    lang = spacy.load(lang)
-            return task._prepare_for_training_with_spacy(data=data, train_size=train_size, seed=seed, lang=lang)
-        elif framework is Framework.SPARK_NLP:
-            return task._prepare_for_training_with_spark_nlp(data=data, train_size=train_size, seed=seed)
-        elif framework is Framework.OPENAI:
-            return task._prepare_for_training_with_openai(data=data, train_size=train_size, seed=seed)
-        elif framework is Framework.TRL:
-            return task._prepare_for_training_with_trl(data=data, train_size=train_size, seed=seed)
-        elif framework is Framework.TRLX:
-            return task._prepare_for_training_with_trlx(data=data, train_size=train_size, seed=seed)
-        elif framework is Framework.SENTENCE_TRANSFORMERS:
-            return task._prepare_for_training_with_sentence_transformers(data=data, train_size=train_size, seed=seed)
-        else:
-            raise NotImplementedError(
-                f"Framework {framework} is not supported. Choose from: {[e.value for e in Framework]}"
-            )
+        return task.prepare_for_training(framework=framework, dataset=self, train_size=train_size, seed=seed, lang=lang)
 
     def update_records(self, records: Union["FeedbackRecord", List["FeedbackRecord"]]) -> None:
         warnings.warn(
@@ -498,3 +525,18 @@ class FeedbackDataset(ArgillaMixin, HuggingFaceDatasetMixin, FeedbackDatasetBase
             UserWarning,
         )
         return self
+
+    def find_similar_records(
+        self,
+        vector_name: str,
+        value: Optional[List[float]] = None,
+        record: Optional[R] = None,
+        max_results: int = 50,
+    ) -> List[Tuple[FeedbackRecord, float]]:
+        warnings.warn(
+            "`find_similar_records` method is not supported for local datasets and won't take any effect. "
+            "First, you need to push the dataset to Argilla with `FeedbackDataset.push_to_argilla`. "
+            "After, use `FeedbackDataset.from_argilla(...).find_similar_records()`",
+            UserWarning,
+        )
+        return []

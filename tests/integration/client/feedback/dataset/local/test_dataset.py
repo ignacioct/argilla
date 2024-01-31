@@ -15,10 +15,10 @@
 import tempfile
 from typing import TYPE_CHECKING, List, Type, Union
 
+import argilla.client.singleton
 import datasets
 import pytest
-from argilla import Workspace
-from argilla.client import api
+from argilla import User, Workspace
 from argilla.client.feedback.config import DatasetConfig
 from argilla.client.feedback.dataset import FeedbackDataset
 from argilla.client.feedback.schemas.fields import TextField
@@ -30,7 +30,8 @@ from argilla.client.feedback.schemas.metadata import (
 from argilla.client.feedback.schemas.questions import TextQuestion
 from argilla.client.feedback.schemas.records import FeedbackRecord
 from argilla.client.feedback.schemas.remote.records import RemoteSuggestionSchema
-from argilla.client.feedback.training.schemas import TrainingTask
+from argilla.client.feedback.schemas.vector_settings import VectorSettings
+from argilla.client.feedback.training.schemas.base import TrainingTask
 from argilla.client.models import Framework
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 
 
 def test_create_dataset_with_suggestions(argilla_user: "ServerUser") -> None:
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     ds = FeedbackDataset(fields=[TextField(name="text")], questions=[TextQuestion(name="text")])
 
@@ -65,7 +66,7 @@ def test_create_dataset_with_suggestions(argilla_user: "ServerUser") -> None:
 
 @pytest.mark.asyncio
 async def test_update_dataset_records_with_suggestions(argilla_user: "ServerUser", db: "AsyncSession"):
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     ds = FeedbackDataset(fields=[TextField(name="text")], questions=[TextQuestion(name="text")])
 
@@ -225,6 +226,39 @@ def test_add_records(
     assert len(dataset) == len(dataset.records)
 
 
+def test_add_records_with_vectors() -> None:
+    dataset = FeedbackDataset(
+        fields=[TextField(name="text", required=True)],
+        questions=[TextQuestion(name="question-1", required=True)],
+        vectors_settings=[
+            VectorSettings(name="vector-1", dimensions=3),
+            VectorSettings(name="vector-2", dimensions=4),
+        ],
+    )
+
+    dataset.add_records(
+        [
+            FeedbackRecord(
+                fields={"text": "Text"},
+                vectors={
+                    "vector-1": [1.0, 2.0, 3.0],
+                },
+            ),
+            FeedbackRecord(
+                fields={"text": "Text"},
+                vectors={
+                    "vector-1": [1.0, 2.0, 3.0],
+                    "vector-2": [1.0, 2.0, 3.0, 4.0],
+                },
+            ),
+        ]
+    )
+
+    assert len(dataset.records) == 2
+    assert dataset.records[0].vectors == {"vector-1": [1.0, 2.0, 3.0]}
+    assert dataset.records[1].vectors == {"vector-1": [1.0, 2.0, 3.0], "vector-2": [1.0, 2.0, 3.0, 4.0]}
+
+
 @pytest.mark.parametrize(
     "record, exception_cls, exception_msg",
     [
@@ -254,7 +288,7 @@ def test_add_records(
 def test_add_records_validation_error(
     record: FeedbackRecord, exception_cls: Exception, exception_msg: str, argilla_user: "ServerUser"
 ) -> None:
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     dataset = FeedbackDataset(
         fields=[TextField(name="required-field", required=True), TextField(name="optional-field", required=False)],
@@ -285,8 +319,8 @@ def test_format_as(
     feedback_dataset_questions: List["AllowedQuestionTypes"],
     feedback_dataset_records: List[FeedbackRecord],
 ) -> None:
-    api.active_api()
-    api.init(api_key="argilla.apikey")
+    argilla.client.singleton.active_api()
+    argilla.client.singleton.init(api_key="argilla.apikey")
 
     dataset = FeedbackDataset(
         guidelines=feedback_dataset_guidelines,
@@ -308,8 +342,8 @@ async def test_push_to_argilla_and_from_argilla(
     feedback_dataset_questions: List["AllowedQuestionTypes"],
     db: "AsyncSession",
 ) -> None:
-    api.active_api()
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.active_api()
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     dataset = FeedbackDataset(
         guidelines=feedback_dataset_guidelines,
@@ -373,8 +407,8 @@ async def test_copy_dataset_in_argilla(
     feedback_dataset_records: List[FeedbackRecord],
     db: "AsyncSession",
 ) -> None:
-    api.active_api()
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.active_api()
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     dataset = FeedbackDataset(
         guidelines=feedback_dataset_guidelines,
@@ -413,8 +447,8 @@ async def test_update_dataset_records_in_argilla(
     feedback_dataset_records: List[FeedbackRecord],
     db: "AsyncSession",
 ) -> None:
-    api.active_api()
-    api.init(api_key=argilla_user.api_key)
+    argilla.client.singleton.active_api()
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
 
     dataset = FeedbackDataset(
         guidelines=feedback_dataset_guidelines,
@@ -487,8 +521,8 @@ def test_push_to_huggingface_and_from_huggingface(
     feedback_dataset_questions: List["AllowedQuestionTypes"],
     feedback_dataset_records: List[FeedbackRecord],
 ) -> None:
-    api.active_api()
-    api.init(api_key="argilla.apikey")
+    argilla.client.singleton.active_api()
+    argilla.client.singleton.init(api_key="argilla.apikey")
 
     dataset = FeedbackDataset(
         guidelines=feedback_dataset_guidelines,
@@ -612,7 +646,7 @@ def test_prepare_for_training_text_classification(
     )
     dataset.add_records(feedback_dataset_records)
 
-    api.init(api_key=owner.api_key)
+    argilla.client.singleton.init(api_key=owner.api_key)
     ws = Workspace.create(name="test-workspace")
 
     remote = dataset.push_to_argilla(name="test-dataset", workspace=ws)
@@ -622,6 +656,47 @@ def test_prepare_for_training_text_classification(
 
     data = remote.prepare_for_training(framework=framework, task=task)
     assert data is not None
+
+
+def test_push_to_argilla_with_vector_settings(argilla_user: User):
+    argilla.client.singleton.init(api_key=argilla_user.api_key)
+
+    dataset = FeedbackDataset(
+        fields=[TextField(name="required-field")],
+        questions=[TextQuestion(name="question")],
+        vectors_settings=[VectorSettings(name="vector-settings", dimensions=100)],
+    )
+
+    remote = dataset.push_to_argilla(name="test-dataset-vector01")
+    assert len(remote.vectors_settings) == 1
+    assert remote.vectors_settings[0].name == "vector-settings"
+    assert remote.vectors_settings[0].dimensions == 100
+
+
+def test_add_vector_settings():
+    dataset = FeedbackDataset(
+        fields=[TextField(name="required-field")],
+        questions=[TextQuestion(name="question")],
+    )
+
+    expected_settings = VectorSettings(name="vector-settings", dimensions=100)
+    new_settings = dataset.add_vector_settings(expected_settings)
+    assert expected_settings == new_settings
+    assert len(dataset.vectors_settings) == 1
+    assert dataset.vector_settings_by_name("vector-settings") == expected_settings
+
+
+def test_add_duplicated_vector_settings():
+    dataset = FeedbackDataset(
+        fields=[TextField(name="required-field")],
+        questions=[TextQuestion(name="question")],
+    )
+
+    expected_settings = VectorSettings(name="vector-settings", dimensions=100)
+    dataset.add_vector_settings(expected_settings)
+
+    with pytest.raises(ValueError, match="Vector settings with name 'vector-settings' already exists"):
+        dataset.add_vector_settings(expected_settings)
 
 
 @pytest.mark.usefixtures(

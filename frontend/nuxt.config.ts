@@ -18,7 +18,6 @@
 import { NuxtConfig } from "@nuxt/types";
 import Mode from "frontmatter-markdown-loader/mode";
 import pkg from "./package.json";
-import { translations } from "./translation";
 
 const LOCAL_ENVIRONMENT = "http://localhost:6900";
 const BASE_URL = process.env.API_BASE_URL ?? LOCAL_ENVIRONMENT;
@@ -58,11 +57,14 @@ const config: NuxtConfig = {
 
   // Plugins to run before rendering page (https://go.nuxtjs.dev/config-plugins)
   plugins: [
+    { src: "~/plugins/logo" },
+
     { src: "~/plugins/directives" },
 
     { src: "~/plugins/di" },
 
-    { src: "~/plugins/plugins/vuex-orm-axios.js" },
+    { src: "~/plugins/plugins/axios.ts" },
+    { src: "~/plugins/plugins/axios-cache.ts" },
     { src: "~/plugins/plugins/svg-icon.js" },
     { src: "~/plugins/plugins/vue-vega.js" },
     { src: "~/plugins/plugins/click-outside.js" },
@@ -114,14 +116,16 @@ const config: NuxtConfig = {
   ],
 
   i18n: {
-    locales: ["en"],
+    locales: [
+      {
+        code: "en",
+        file: "en.js",
+      },
+    ],
+    lazy: true,
+    langDir: "translation/",
     defaultLocale: "en",
     strategy: "no_prefix",
-    vueI18n: {
-      messages: {
-        en: translations.en,
-      },
-    },
   },
 
   // Axios module configuration (https://go.nuxtjs.dev/config-axios)
@@ -169,7 +173,7 @@ const config: NuxtConfig = {
 
   auth: {
     strategies: {
-      authProvider: {
+      basic: {
         scheme: "local",
         token: {
           property: "access_token",
@@ -191,7 +195,7 @@ const config: NuxtConfig = {
       },
     },
     resetOnError: true,
-    redirect: { login: "/login", logout: "/login" },
+    redirect: { login: "/sign-in", logout: "/sign-in" },
   },
 
   router: {

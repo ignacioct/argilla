@@ -16,8 +16,8 @@ from typing import Any, Dict
 
 from fastapi import HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from pydantic import BaseModel
 
+from argilla.server import telemetry
 from argilla.server.errors.adapter import exception_to_argilla_error
 from argilla.server.errors.base_errors import (
     EntityAlreadyExistsError,
@@ -25,7 +25,7 @@ from argilla.server.errors.base_errors import (
     GenericServerError,
     ServerError,
 )
-from argilla.utils import telemetry
+from argilla.server.pydantic_v1 import BaseModel
 
 
 class ErrorDetail(BaseModel):

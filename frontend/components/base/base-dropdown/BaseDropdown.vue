@@ -16,12 +16,29 @@
   -->
 
 <template>
-  <div v-click-outside="onClickOutside" class="dropdown">
+  <div
+    ref="dropdown"
+    class="dropdown"
+    v-click-outside="{
+      events: ['mousedown'],
+      handler: onClose,
+    }"
+  >
     <div class="dropdown__header" @click="onClick">
       <slot name="dropdown-header" />
     </div>
     <transition appear name="fade">
-      <div v-if="visible" class="dropdown__content">
+      <div
+        v-if="visible && inViewport"
+        class="dropdown__content"
+        :style="
+          isViewportBoundary && {
+            top: `${dropdownTop}px`,
+            left: `${dropdownLeft}px`,
+            position: 'fixed',
+          }
+        "
+      >
         <slot name="dropdown-content" />
       </div>
     </transition>
@@ -35,17 +52,110 @@ export default {
   },
   props: {
     visible: {
-      default: false,
       type: Boolean,
+      default: false,
+    },
+    boundary: {
+      type: String,
+      default: "parent",
+      validator: (value) => ["parent", "viewport"].includes(value),
+    },
+    gap: {
+      type: Number,
+      default: 8,
+    },
+  },
+  data() {
+    return {
+      dropdownTop: 0,
+      dropdownLeft: 0,
+      inViewport: true,
+    };
+  },
+  computed: {
+    isViewportBoundary() {
+      return this.boundary === "viewport";
+    },
+  },
+  watch: {
+    visible() {
+      this.$nextTick(() => {
+        this.setViewportPosition();
+      });
     },
   },
   methods: {
-    onClickOutside() {
+    onClose() {
       this.$emit("visibility", false);
     },
-    onClick() {
+    onToggle() {
       this.$emit("visibility", !this.visible);
     },
+    onClick() {
+      this.onToggle();
+    },
+    setViewportPosition() {
+      if (!this.isViewportBoundary) return;
+      if (!this.visible) return;
+
+      this.inViewport = this.isInViewport(this.$refs.dropdown);
+
+      if (!this.inViewport) return;
+
+      const { top, left, height } = this.$refs.dropdown.getBoundingClientRect();
+
+      this.dropdownTop = top + height + this.gap;
+
+      this.dropdownLeft = left;
+    },
+    isScrollable(el) {
+      const hasScrollableContent =
+        el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+      const overflowYStyle = window.getComputedStyle(el).overflow;
+      const isOverflowHidden = overflowYStyle.indexOf("hidden") !== -1;
+      return hasScrollableContent && !isOverflowHidden;
+    },
+    getScrollableParent(element) {
+      const isBody = !element || element === document.body;
+
+      if (isBody) return document.body;
+
+      if (this.isScrollable(element)) return element;
+
+      return this.getScrollableParent(element.parentNode);
+    },
+    isInViewport(element) {
+      const rect = element.getBoundingClientRect();
+      const parentHeight = element.offsetHeight;
+
+      const html = document.documentElement;
+      return (
+        rect.top >= parentHeight &&
+        rect.left >= 0 &&
+        rect.bottom <= (window.innerHeight || html.clientHeight) &&
+        rect.right <= (window.innerWidth || html.clientWidth)
+      );
+    },
+  },
+  mounted() {
+    if (this.isViewportBoundary) {
+      window.addEventListener("resize", this.setViewportPosition);
+      this.getScrollableParent(this.$refs.dropdown).addEventListener(
+        "scroll",
+        this.setViewportPosition
+      );
+
+      this.setViewportPosition();
+    }
+  },
+  beforeDestroy() {
+    if (this.isViewportBoundary) {
+      window.removeEventListener("resize", this.setViewportPosition);
+      this.getScrollableParent(this.$refs.dropdown).removeEventListener(
+        "scroll",
+        this.setViewportPosition
+      );
+    }
   },
 };
 </script>
@@ -71,8 +181,8 @@ export default {
   }
   &__content {
     position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
+    top: calc(100% + 8px);
+    left: 0;
     z-index: 3;
     transform: translate(0);
     box-shadow: $shadow;

@@ -14,20 +14,192 @@ These are the section headers that we use:
 * "Security" in case of vulnerabilities.
 -->
 
-## [Unreleased]()
+## [1.23.0-Unreleased]()
 
 ### Added
 
-- Added `max_records` argument to `pull()` method for `RemoteFeedbackDataset`.([#4074](https://github.com/argilla-io/argilla/pull/4074))
-- Added functionality to push your models to huggingface hub with `ArgillaTrainer.push_to_huggingface` ([#3976](https://github.com/argilla-io/argilla/pull/3976)).
+- Added bulk annotation by filter criteria ([#4516](https://github.com/argilla-io/argilla/pull/4516))
+- Automatically fetch new datasets on focus tab ([#4514](https://github.com/argilla-io/argilla/pull/4514))
+- API v1 responses returning `Record` schema now always include `dataset_id` as attribute. ([#4482](https://github.com/argilla-io/argilla/pull/4482))
+- API v1 responses returning `Response` schema now always include `record_id` as attribute. ([#4482](https://github.com/argilla-io/argilla/pull/4482))
+- API v1 responses returning `Question` schema now always include `dataset_id` attribute. ([#4487](https://github.com/argilla-io/argilla/pull/4487))
+- API v1 responses returning `Field` schema now always include `dataset_id` attribute. ([#4488](https://github.com/argilla-io/argilla/pull/4488))
+- API v1 responses returning `MetadataProperty` schema now always include `dataset_id` attribute. ([#4489](https://github.com/argilla-io/argilla/pull/4489))
+- API v1 responses returning `VectorSettings` schema now always include `dataset_id` attribute. ([#4490](https://github.com/argilla-io/argilla/pull/4490))
+- Added `pdf_to_html` function to `.html_utils` module that convert PDFs to dataURL to be able to render them in tha Argilla UI. ([#4481](https://github.com/argilla-io/argilla/issues/4481#issuecomment-1903695755))
+- Added `ARGILLA_AUTH_SECRET_KEY` environment variable. ([#4539](https://github.com/argilla-io/argilla/pull/4539))
+- Added `ARGILLA_AUTH_ALGORITHM` environment variable. ([#4539](https://github.com/argilla-io/argilla/pull/4539))
+- Added `ARGILLA_AUTH_TOKEN_EXPIRATION` environment variable. ([#4539](https://github.com/argilla-io/argilla/pull/4539))
+- Added `ARGILLA_AUTH_OAUTH_CFG` environment variable. ([#4546](https://github.com/argilla-io/argilla/pull/4546))
+- Added OAuth2 support for HuggingFace Hub. ([#4546](https://github.com/argilla-io/argilla/pull/4546))
 
-### Fixed
+### Deprecated
 
-- Fix svg images out of screen with too large images ([#4047](https://github.com/argilla-io/argilla/pull/4047))
+- Deprecated `ARGILLA_LOCAL_AUTH_*` environment variables. Will be removed in the release v1.25.0. ([#4539](https://github.com/argilla-io/argilla/pull/4539))
 
 ### Changed
 
-- Changed `FeedbackDataset.*_by_name()` methods to return `None` when no match is found ([#4101](https://github.com/argilla-io/argilla/pull/3976)).
+- Changed regex pattern for `username` attribute in `UserCreate`. Now uppercase letters are allowed. ([#4544](https://github.com/argilla-io/argilla/pull/4544))
+
+### Removed
+
+- Remove sending `Authorization` header from python SDK requests. ([#4535](https://github.com/argilla-io/argilla/pull/4535))
+
+### Fixed
+
+- Fixed keyboard shortcut for label questions ([#4530](https://github.com/argilla-io/argilla/pull/4530))
+
+## [1.22.0](https://github.com/argilla-io/argilla/compare/v1.21.0...v1.22.0)
+
+### Added
+
+- Added Bulk annotation support. ([#4333](https://github.com/argilla-io/argilla/pull/4333))
+- Restore filters from feedback dataset settings. ([#4461])(https://github.com/argilla-io/argilla/pull/4461)
+- Warning on feedback dataset settings when leaving page with unsaved changes. ([#4461](https://github.com/argilla-io/argilla/pull/4461))
+- Added pydantic v2 support using the python SDK. ([#4459](https://github.com/argilla-io/argilla/pull/4459))
+- Added `vector_settings` to the `__repr__` method of the `FeedbackDataset` and `RemoteFeedbackDataset`. ([#4454](https://github.com/argilla-io/argilla/pull/4454))
+- Added integration for `sentence-transformers` using `SentenceTransformersExtractor` to configure `vector_settings` in `FeedbackDataset` and `FeedbackRecord`. ([#4454](https://github.com/argilla-io/argilla/pull/4454))
+
+### Changed
+
+- Module `argilla.cli.server` definitions have been moved to `argilla.server.cli` module. ([#4472](https://github.com/argilla-io/argilla/pull/4472))
+- [breaking] Changed `vector_settings_by_name` for generic `property_by_name` usage, which will return `None` instead of raising an error. ([#4454](https://github.com/argilla-io/argilla/pull/4454))
+- The constant definition `ES_INDEX_REGEX_PATTERN` in module `argilla._constants` is now private. ([#4472](https://github.com/argilla-io/argilla/pull/4474))
+- `nan` values in metadata properties will raise a 422 error when creating/updating records. ([#4300](https://github.com/argilla-io/argilla/issues/4300))
+- `None` values are now allowed in metadata properties. ([#4300](https://github.com/argilla-io/argilla/issues/4300))
+- Refactor and add `width`, `height`, `autoplay` and `loop` attributes as optional args in `to_html` functions. ([#4481](https://github.com/argilla-io/argilla/issues/4481#issuecomment-1903695755))
+
+### Fixed
+
+- Paginating to a new record, automatically scrolls down to selected form area. ([#4333](https://github.com/argilla-io/argilla/pull/4333))
+
+### Deprecated
+
+- The `missing` response status for filtering records is deprecated and will be removed in the release v1.24.0. Use `pending` instead. ([#4433](https://github.com/argilla-io/argilla/pull/4433))
+
+### Removed
+
+- The deprecated `python -m argilla database` command has been removed. ([#4472](https://github.com/argilla-io/argilla/pull/4472))
+
+## [1.21.0](https://github.com/argilla-io/argilla/compare/v1.20.0...v1.21.0)
+
+### Added
+
+- Added new draft queue for annotation view ([#4334](https://github.com/argilla-io/argilla/pull/4334))
+- Added annotation metrics module for the `FeedbackDataset` (`argilla.client.feedback.metrics`). ([#4175](https://github.com/argilla-io/argilla/pull/4175)).
+- Added strategy to handle and translate errors from the server for `401` HTTP status code` ([#4362](https://github.com/argilla-io/argilla/pull/4362))
+- Added integration for `textdescriptives` using `TextDescriptivesExtractor` to configure `metadata_properties` in `FeedbackDataset` and `FeedbackRecord`. ([#4400](https://github.com/argilla-io/argilla/pull/4400)). Contributed by @m-newhauser
+- Added `POST /api/v1/me/responses/bulk` endpoint to create responses in bulk for current user. ([#4380](https://github.com/argilla-io/argilla/pull/4380))
+- Added list support for term metadata properties. (Closes [#4359](https://github.com/argilla-io/argilla/issues/4359))
+- Added new CLI task to reindex datasets and records into the search engine. ([#4404](https://github.com/argilla-io/argilla/pull/4404))
+- Added `httpx_extra_kwargs` argument to `rg.init` and `Argilla` to allow passing extra arguments to `httpx.Client` used by `Argilla`. ([#4440](https://github.com/argilla-io/argilla/pull/4441))
+- Added `ResponseStatusFilter` enum in `__init__` imports of Argilla ([#4118](https://github.com/argilla-io/argilla/pull/4463)). Contributed by @Piyush-Kumar-Ghosh.
+
+### Changed
+
+- More productive and simpler shortcut system ([#4215](https://github.com/argilla-io/argilla/pull/4215))
+- Move `ArgillaSingleton`, `init` and `active_client` to a new module `singleton`. ([#4347](https://github.com/argilla-io/argilla/pull/4347))
+- Updated `argilla.load` functions to also work with `FeedbackDataset`s. ([#4347](https://github.com/argilla-io/argilla/pull/4347))
+- [breaking] Updated `argilla.delete` functions to also work with `FeedbackDataset`s. It now raises an error if the dataset does not exist. ([#4347](https://github.com/argilla-io/argilla/pull/4347))
+- Updated `argilla.list_datasets` functions to also work with `FeedbackDataset`s. ([#4347](https://github.com/argilla-io/argilla/pull/4347))
+
+### Fixed
+
+- Fixed error in `TextClassificationSettings.from_dict` method in which the `label_schema` created was a list of `dict` instead of a list of `str`. ([#4347](https://github.com/argilla-io/argilla/pull/4347))
+- Fixed total records on pagination component ([#4424](https://github.com/argilla-io/argilla/pull/4424))
+
+### Removed
+
+- Removed `draft` auto save for annotation view ([#4334](https://github.com/argilla-io/argilla/pull/4334))
+
+## [1.20.0](https://github.com/argilla-io/argilla/compare/v1.19.0...v1.20.0)
+
+### Added
+
+- Added `GET /api/v1/datasets/:dataset_id/records/search/suggestions/options` endpoint to return suggestion available options for searching. ([#4260](https://github.com/argilla-io/argilla/pull/4260))
+- Added `metadata_properties` to the `__repr__` method of the `FeedbackDataset` and `RemoteFeedbackDataset`.([#4192](https://github.com/argilla-io/argilla/pull/4192)).
+- Added `get_model_kwargs`, `get_trainer_kwargs`, `get_trainer_model`, `get_trainer_tokenizer` and `get_trainer` -methods to the `ArgillaTrainer` to improve interoperability across frameworks. ([#4214](https://github.com/argilla-io/argilla/pull/4214)).
+- Added additional formatting checks to the `ArgillaTrainer` to allow for better interoperability of `defaults` and `formatting_func` usage. ([#4214](https://github.com/argilla-io/argilla/pull/4214)).
+- Added a warning to the `update_config`-method of `ArgillaTrainer` to emphasize if the `kwargs` were updated correctly. ([#4214](https://github.com/argilla-io/argilla/pull/4214)).
+- Added `argilla.client.feedback.utils` module with `html_utils` (this mainly includes `video/audio/image_to_html` that convert media to dataURL to be able to render them in tha Argilla UI and `create_token_highlights` to highlight tokens in a custom way. Both work on TextQuestion and TextField with use_markdown=True) and `assignments` (this mainly includes `assign_records` to assign records according to a number of annotators and records, an overlap and the shuffle option; and `assign_workspace` to assign and create if needed a workspace according to the record assignment). ([#4121](https://github.com/argilla-io/argilla/pull/4121))
+
+### Fixed
+
+- Fixed error in `ArgillaTrainer`, with numerical labels, using `RatingQuestion` instead of `RankingQuestion` ([#4171](https://github.com/argilla-io/argilla/pull/4171))
+- Fixed error in `ArgillaTrainer`, now we can train for `extractive_question_answering` using a validation sample ([#4204](https://github.com/argilla-io/argilla/pull/4204))
+- Fixed error in `ArgillaTrainer`, when training for `sentence-similarity` it didn't work with a list of values per record ([#4211](https://github.com/argilla-io/argilla/pull/4211))
+- Fixed error in the unification strategy for `RankingQuestion` ([#4295](https://github.com/argilla-io/argilla/pull/4295))
+- Fixed `TextClassificationSettings.labels_schema` order was not being preserved. Closes [#3828](https://github.com/argilla-io/argilla/issues/3828) ([#4332](https://github.com/argilla-io/argilla/pull/4332))
+- Fixed error when requesting non-existing API endpoints. Closes [#4073](https://github.com/argilla-io/argilla/issues/4073) ([#4325](https://github.com/argilla-io/argilla/pull/4325))
+- Fixed error when passing `draft` responses to create records endpoint. ([#4354](https://github.com/argilla-io/argilla/pull/4354))
+
+### Changed
+
+- [breaking] Suggestions `agent` field only accepts now some specific characters and a limited length. ([#4265](https://github.com/argilla-io/argilla/pull/4265))
+- [breaking] Suggestions `score` field only accepts now float values in the range `0` to `1`. ([#4266](https://github.com/argilla-io/argilla/pull/4266))
+- Updated `POST /api/v1/dataset/:dataset_id/records/search` endpoint to support optional `query` attribute. ([#4327](https://github.com/argilla-io/argilla/pull/4327))
+- Updated `POST /api/v1/dataset/:dataset_id/records/search` endpoint to support `filter` and `sort` attributes. ([#4327](https://github.com/argilla-io/argilla/pull/4327))
+- Updated `POST /api/v1/me/datasets/:dataset_id/records/search` endpoint to support optional `query` attribute. ([#4270](https://github.com/argilla-io/argilla/pull/4270))
+- Updated `POST /api/v1/me/datasets/:dataset_id/records/search` endpoint to support `filter` and `sort` attributes. ([#4270](https://github.com/argilla-io/argilla/pull/4270))
+- Changed the logging style while pulling and pushing `FeedbackDataset` to Argilla from `tqdm` style to `rich`. ([#4267](https://github.com/argilla-io/argilla/pull/4267)). Contributed by @zucchini-nlp.
+- Updated `push_to_argilla` to print `repr` of the pushed `RemoteFeedbackDataset` after push and changed `show_progress` to True by default. ([#4223](https://github.com/argilla-io/argilla/pull/4223))
+- Changed `models` and `tokenizer` for the `ArgillaTrainer` to explicitly allow for changing them when needed. ([#4214](https://github.com/argilla-io/argilla/pull/4214)).
+
+## [1.19.0](https://github.com/argilla-io/argilla/compare/v1.18.0...v1.19.0)
+
+### Added
+
+- Added `POST /api/v1/datasets/:dataset_id/records/search` endpoint to search for records without user context, including responses by all users. ([#4143](https://github.com/argilla-io/argilla/pull/4143))
+- Added `POST /api/v1/datasets/:dataset_id/vectors-settings` endpoint for creating vector settings for a dataset. ([#3776](https://github.com/argilla-io/argilla/pull/3776))
+- Added `GET /api/v1/datasets/:dataset_id/vectors-settings` endpoint for listing the vectors settings for a dataset. ([#3776](https://github.com/argilla-io/argilla/pull/3776))
+- Added `DELETE /api/v1/vectors-settings/:vector_settings_id` endpoint for deleting a vector settings. ([#3776](https://github.com/argilla-io/argilla/pull/3776))
+- Added `PATCH /api/v1/vectors-settings/:vector_settings_id` endpoint for updating a vector settings. ([#4092](https://github.com/argilla-io/argilla/pull/4092))
+- Added `GET /api/v1/records/:record_id` endpoint to get a specific record. ([#4039](https://github.com/argilla-io/argilla/pull/4039))
+- Added support to include vectors for `GET /api/v1/datasets/:dataset_id/records` endpoint response using `include` query param. ([#4063](https://github.com/argilla-io/argilla/pull/4063))
+- Added support to include vectors for `GET /api/v1/me/datasets/:dataset_id/records` endpoint response using `include` query param. ([#4063](https://github.com/argilla-io/argilla/pull/4063))
+- Added support to include vectors for `POST /api/v1/me/datasets/:dataset_id/records/search` endpoint response using `include` query param. ([#4063](https://github.com/argilla-io/argilla/pull/4063))
+- Added `show_progress` argument to `from_huggingface()` method to make the progress bar for parsing records process optional.([#4132](https://github.com/argilla-io/argilla/pull/4132)).
+- Added a progress bar for parsing records process to `from_huggingface()` method with `trange` in `tqdm`.([#4132](https://github.com/argilla-io/argilla/pull/4132)).
+- Added to sort by `inserted_at` or `updated_at` for datasets with no metadata. ([4147](https://github.com/argilla-io/argilla/pull/4147))
+- Added `max_records` argument to `pull()` method for `RemoteFeedbackDataset`.([#4074](https://github.com/argilla-io/argilla/pull/4074))
+- Added functionality to push your models to the Hugging Face hub with `ArgillaTrainer.push_to_huggingface` ([#3976](https://github.com/argilla-io/argilla/pull/3976)). Contributed by @Racso-3141.
+- Added `filter_by` argument to `ArgillaTrainer` to filter by `response_status` ([#4120](https://github.com/argilla-io/argilla/pull/4120)).
+- Added `sort_by` argument to `ArgillaTrainer` to sort by `metadata` ([#4120](https://github.com/argilla-io/argilla/pull/4120)).
+- Added `max_records` argument to `ArgillaTrainer` to limit record used for training ([#4120](https://github.com/argilla-io/argilla/pull/4120)).
+- Added `add_vector_settings` method to local and remote `FeedbackDataset`. ([#4055](https://github.com/argilla-io/argilla/pull/4055))
+- Added `update_vectors_settings` method to local and remote `FeedbackDataset`. ([#4122](https://github.com/argilla-io/argilla/pull/4122))
+- Added `delete_vectors_settings` method to local and remote `FeedbackDataset`. ([#4130](https://github.com/argilla-io/argilla/pull/4130))
+- Added `vector_settings_by_name` method to local and remote `FeedbackDataset`. ([#4055](https://github.com/argilla-io/argilla/pull/4055))
+- Added `find_similar_records` method to local and remote `FeedbackDataset`. ([#4023](https://github.com/argilla-io/argilla/pull/4023))
+- Added `ARGILLA_SEARCH_ENGINE` environment variable to configure the search engine to use. ([#4019](https://github.com/argilla-io/argilla/pull/4019))
+
+### Changed
+
+- [breaking] Remove support for Elasticsearch < 8.5 and OpenSearch < 2.4. ([#4173](https://github.com/argilla-io/argilla/pull/4173))
+- [breaking] Users working with OpenSearch engines must use version >=2.4 and set `ARGILLA_SEARCH_ENGINE=opensearch`. ([#4019](https://github.com/argilla-io/argilla/pull/4019) and [#4111](https://github.com/argilla-io/argilla/pull/4111))
+- [breaking] Changed `FeedbackDataset.*_by_name()` methods to return `None` when no match is found ([#4101](https://github.com/argilla-io/argilla/pull/3976)).
+- [breaking] `limit` query parameter for `GET /api/v1/datasets/:dataset_id/records` endpoint is now only accepting values greater or equal than `1` and less or equal than `1000`. ([#4143](https://github.com/argilla-io/argilla/pull/4143))
+- [breaking] `limit` query parameter for `GET /api/v1/me/datasets/:dataset_id/records` endpoint is now only accepting values greater or equal than `1` and less or equal than `1000`. ([#4143](https://github.com/argilla-io/argilla/pull/4143))
+- Update `GET /api/v1/datasets/:dataset_id/records` endpoint to fetch record using the search engine. ([#4142](https://github.com/argilla-io/argilla/pull/4142))
+- Update `GET /api/v1/me/datasets/:dataset_id/records` endpoint to fetch record using the search engine. ([#4142](https://github.com/argilla-io/argilla/pull/4142))
+- Update `POST /api/v1/datasets/:dataset_id/records` endpoint to allow to create records with `vectors` ([#4022](https://github.com/argilla-io/argilla/pull/4022))
+- Update `PATCH /api/v1/datasets/:dataset_id` endpoint to allow updating `allow_extra_metadata` attribute. ([#4112](https://github.com/argilla-io/argilla/pull/4112))
+- Update `PATCH /api/v1/datasets/:dataset_id/records` endpoint to allow to update records with `vectors`. ([#4062](https://github.com/argilla-io/argilla/pull/4062))
+- Update `PATCH /api/v1/records/:record_id` endpoint to allow to update record with `vectors`. ([#4062](https://github.com/argilla-io/argilla/pull/4062))
+- Update `POST /api/v1/me/datasets/:dataset_id/records/search` endpoint to allow to search records with vectors. ([#4019](https://github.com/argilla-io/argilla/pull/4019))
+- Update `BaseElasticAndOpenSearchEngine.index_records` method to also index record vectors. ([#4062](https://github.com/argilla-io/argilla/pull/4062))
+- Update `FeedbackDataset.__init__` to allow passing a list of vector settings. ([#4055](https://github.com/argilla-io/argilla/pull/4055))
+- Update `FeedbackDataset.push_to_argilla` to also push vector settings. ([#4055](https://github.com/argilla-io/argilla/pull/4055))
+- Update `FeedbackDatasetRecord` to support the creation of records with vectors. ([#4043](https://github.com/argilla-io/argilla/pull/4043))
+- Using cosine similarity to compute similarity between vectors. ([#4124](https://github.com/argilla-io/argilla/pull/4124))
+
+### Fixed
+
+- Fixed svg images out of screen with too large images ([#4047](https://github.com/argilla-io/argilla/pull/4047))
+- Fixed creating records with responses from multiple users. Closes [#3746](https://github.com/argilla-io/argilla/issues/3746) and [#3808](https://github.com/argilla-io/argilla/issues/3808) ([#4142](https://github.com/argilla-io/argilla/pull/4142))
+- Fixed deleting or updating responses as an owner for annotators. (Commit [403a66d](https://github.com/argilla-io/argilla/commit/403a66d16d816fa8a62e3f76314ccc90e0073297))
+- Fixed passing user_id when getting records by id. (Commit [98c7927](https://github.com/argilla-io/argilla/commit/98c792757a21da05bac89b7f625e7e5792ad59f9))
+- Fixed non-basic tags serialized when pushing a dataset to the Hugging Face Hub. Closes [#4089](https://github.com/argilla-io/argilla/issues/4089) ([#4200](https://github.com/argilla-io/argilla/pull/4200))
 
 ## [1.18.0](https://github.com/argilla-io/argilla/compare/v1.17.0...v1.18.0)
 

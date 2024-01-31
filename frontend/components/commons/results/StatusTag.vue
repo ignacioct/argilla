@@ -1,5 +1,9 @@
 <template>
-  <span :class="['status-tag', getStatusInfo.class]">
+  <span
+    :key="recordStatus"
+    :class="['status-tag', getStatusInfo.class]"
+    :title="getStatusInfo.name"
+  >
     <svgicon
       v-if="getStatusInfo.icon"
       :name="getStatusInfo.icon"
@@ -23,7 +27,7 @@ export default {
   },
   computed: {
     getStatusInfo() {
-      switch (this.recordStatus) {
+      switch (this.recordStatus.toLowerCase()) {
         case "validated":
           return {
             name: "Validate",
@@ -39,11 +43,16 @@ export default {
           };
 
         case "pending":
-        case "draft":
           return {
             name: "Pending",
             icon: null,
             class: "--pending",
+          };
+        case "draft":
+          return {
+            name: "Draft",
+            icon: null,
+            class: "--draft",
           };
 
         case "discarded":
@@ -70,33 +79,33 @@ export default {
   display: inline-flex;
   z-index: 0;
   align-items: center;
-  padding: 0.2em 1em;
+  padding: 0.1em $base-space;
   color: palette(white);
   @include font-size(13px);
   border-radius: 50px;
-  font-weight: 600;
+  font-weight: 500;
 
   &.--validated {
     background: palette(green);
     border: 1px solid palette(green);
   }
-  &.--edited {
-    background: #bb720a;
-    border: 1px solid #bb720a;
-  }
 
   &.--discarded {
-    background: #a7a7a7;
-    border: 1px solid #a7a7a7;
+    background: $discarded-color;
+    border: 1px solid $discarded-color;
   }
   &.--submitted {
-    background: $primary-color;
-    border: 1px solid $primary-color;
+    background: $submitted-color;
+    border: 1px solid $submitted-color;
   }
-  &.--pending {
-    background: #eeeeff;
-    border: 1px solid #b6b9ff;
-    color: #4c4ea3;
+  &.--pending,
+  &.--edited {
+    background: $pending-color;
+    border: 1px solid $pending-color;
+  }
+  &.--draft {
+    background: $draft-color;
+    border: 1px solid $draft-color;
   }
 
   .svg-icon {

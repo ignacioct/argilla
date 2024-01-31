@@ -15,8 +15,6 @@
 from typing import Callable
 
 import pytest
-from argilla import User
-from argilla._constants import API_KEY_HEADER_NAME
 from argilla.server.apis.v0.models.commons.model import BulkResponse, SortableField
 from argilla.server.apis.v0.models.token_classification import (
     TokenClassificationBulkRequest,
@@ -26,8 +24,8 @@ from argilla.server.apis.v0.models.token_classification import (
     TokenClassificationSearchResults,
 )
 from argilla.server.commons.models import TaskType
-
-from tests import SUPPORTED_VECTOR_SEARCH
+from argilla.server.constants import API_KEY_HEADER_NAME
+from argilla.server.models import User
 
 
 @pytest.mark.asyncio
@@ -262,10 +260,6 @@ async def test_create_records_for_token_classification(
         assert metrics_validator(record)
 
 
-@pytest.mark.skipif(
-    condition=not SUPPORTED_VECTOR_SEARCH,
-    reason="Vector search not supported",
-)
 @pytest.mark.parametrize(
     ("include_metrics", "metrics_validator"),
     [

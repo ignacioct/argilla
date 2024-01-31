@@ -14,11 +14,18 @@
 
 import dataclasses
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from opensearchpy import AsyncOpenSearch, helpers
 
+from argilla.server.models import VectorSettings
 from argilla.server.search_engine.base import SearchEngine
-from argilla.server.search_engine.commons import BaseElasticAndOpenSearchEngine
+from argilla.server.search_engine.commons import (
+    BaseElasticAndOpenSearchEngine,
+    es_bool_query,
+    es_field_for_vector_settings,
+    es_ids_query,
+)
 from argilla.server.settings import settings
 
 
@@ -50,10 +57,52 @@ class OpenSearchEngine(BaseElasticAndOpenSearchEngine):
 
     def _configure_index_settings(self):
         return {
+            "index.knn": False,
             "max_result_window": self.max_result_window,
             "number_of_shards": self.number_of_shards,
             "number_of_replicas": self.number_of_replicas,
         }
+
+    def _mapping_for_vector_settings(self, vector_settings: VectorSettings) -> dict:
+        return {
+            es_field_for_vector_settings(vector_settings): {
+                "type": "knn_vector",
+                "dimension": vector_settings.dimensions,
+                "method": {
+                    "name": "hnsw",
+                    "engine": "lucene",  # See https://opensearch.org/blog/Expanding-k-NN-with-Lucene-aNN/
+                    "space_type": "cosinesimil",
+                    "parameters": {"m": 2, "ef_construction": 4},
+                },
+            }
+        }
+
+    async def _request_similarity_search(
+        self,
+        index: str,
+        vector_settings: VectorSettings,
+        value: List[float],
+        k: int,
+        excluded_id: Optional[UUID] = None,
+        query_filters: Optional[List[dict]] = None,
+    ) -> dict:
+        knn_query = {"vector": value, "k": k}
+
+        if excluded_id:
+            # See https://opensearch.org/docs/latest/search-plugins/knn/filter-search-knn/#efficient-k-nn-filtering
+            # Will work from Opensearch >= v2.4.0
+            knn_query["filter"] = es_bool_query(must_not=[es_ids_query([str(excluded_id)])])
+
+        body = {"query": {"knn": {es_field_for_vector_settings(vector_settings): knn_query}}}
+
+        if query_filters:
+            # IMPORTANT: Including boolean filters as part knn filter may return query errors if responses are not
+            # created for requested user (with exists query clauses). This is not happening with Elasticsearch.
+            # The only way make it work is to use them as a post_filter.
+            # See this issue for more details https://github.com/opensearch-project/k-NN/issues/1286
+            body["post_filter"] = es_bool_query(should=query_filters, minimum_should_match=len(query_filters))
+
+        return await self.client.search(index=index, body=body, _source=False, track_total_hits=True, size=k)
 
     async def _create_index_request(self, index_name: str, mappings: dict, settings: dict) -> None:
         await self.client.indices.create(index=index_name, body=dict(settings=settings, mappings=mappings))
@@ -62,7 +111,8 @@ class OpenSearchEngine(BaseElasticAndOpenSearchEngine):
         await self.client.indices.delete(index_name, ignore=[404], ignore_unavailable=True)
 
     async def _update_document_request(self, index_name: str, id: str, body: dict):
-        await self.client.update(index=index_name, id=id, body=body)
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html#refresh-api-desc
+        await self.client.update(index=index_name, id=id, body=body, refresh=True)
 
     async def put_index_mapping_request(self, index: str, mappings: dict):
         await self.client.indices.put_mapping(index=index, body={"properties": mappings})
@@ -94,7 +144,8 @@ class OpenSearchEngine(BaseElasticAndOpenSearchEngine):
         return await self.client.indices.exists(index=index_name)
 
     async def _bulk_op_request(self, actions: List[Dict[str, Any]]):
-        _, errors = await helpers.async_bulk(client=self.client, actions=actions, raise_on_error=False)
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html#refresh-api-desc
+        _, errors = await helpers.async_bulk(client=self.client, actions=actions, raise_on_error=False, refresh=True)
         if errors:
             raise RuntimeError(errors)
 

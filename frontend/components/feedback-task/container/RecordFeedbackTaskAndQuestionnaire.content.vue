@@ -1,28 +1,31 @@
 <template>
   <BaseLoading v-if="$fetchState.pending || $fetchState.error" />
-  <div v-else class="wrapper">
-    <template v-if="!!record">
-      <RecordFeedbackTaskComponent
-        :key="`${record.id}_fields`"
-        :recordStatus="record.status"
-        :fields="record.fields"
-      />
 
-      <QuestionsFormComponent
-        :key="`${record.id}_questions`"
-        class="question-form"
-        :class="statusClass"
-        :datasetId="recordCriteria.datasetId"
-        :record="record"
-        @on-submit-responses="goToNext"
-        @on-discard-responses="goToNext"
-      />
-    </template>
-
-    <div v-if="!records.hasRecordsToAnnotate" class="wrapper--empty">
-      <p class="wrapper__text --heading3" v-text="noRecordsMessage" />
-    </div>
-  </div>
+  <BulkAnnotation
+    v-else-if="
+      recordCriteria.committed.page.isBulkMode &&
+      recordCriteria.committed.isPending
+    "
+    :record-criteria="recordCriteria"
+    :dataset-vectors="datasetVectors"
+    :records="records"
+    :record="record"
+    :no-records-message="noRecordsMessage"
+    :status-class="statusClass"
+    @on-submit-responses="goToNext"
+    @on-discard-responses="goToNext"
+  />
+  <FocusAnnotation
+    v-else
+    :record-criteria="recordCriteria"
+    :dataset-vectors="datasetVectors"
+    :records="records"
+    :record="record"
+    :no-records-message="noRecordsMessage"
+    :status-class="statusClass"
+    @on-submit-responses="goToNext"
+    @on-discard-responses="goToNext"
+  />
 </template>
 
 <script>
@@ -52,30 +55,28 @@ export default {
     noRecordsMessage() {
       const { status } = this.recordCriteria.committed;
 
-      if (this.recordCriteria.isFilteringByText)
+      if (this.recordCriteria.isFilteredByText)
         return `You have no ${status} records matching the search input`;
 
       return `You have no ${status} records`;
     },
     statusClass() {
-      return `--${this.record.status}`;
+      return `--${this.record?.status}`;
     },
     shouldShowNotification() {
       return this.record?.isSubmitted && this.record?.isModified;
     },
   },
   async fetch() {
-    await this.onLoadRecords("replace");
+    await this.onLoadRecords();
   },
   methods: {
-    async onLoadRecords(mode) {
+    async onLoadRecords() {
       if (this.fetching) return Promise.resolve();
 
       this.fetching = true;
 
-      await this.loadRecords(mode, this.recordCriteria);
-
-      this.onSearchFinished();
+      await this.loadRecords(this.recordCriteria);
 
       this.fetching = false;
     },
@@ -98,7 +99,6 @@ export default {
         }, 100);
       }
 
-      this.onSearchFinished();
       this.fetching = false;
     },
     onChangeRecordPage(criteria) {
@@ -107,20 +107,17 @@ export default {
       };
 
       this.showNotificationForNewFilterWhenIfNeeded(filter, () =>
-        criteria.reset()
+        criteria.rollback()
       );
     },
     onChangeRecordFilter(criteria) {
       const filter = async () => {
-        await this.onLoadRecords("replace");
+        await this.onLoadRecords();
       };
 
       this.showNotificationForNewFilterWhenIfNeeded(filter, () =>
-        criteria.reset()
+        criteria.rollback()
       );
-    },
-    onSearchFinished() {
-      return this.$root.$emit("on-changed-total-records", this.records.total);
     },
     goToNext() {
       this.recordCriteria.nextPage();
@@ -134,26 +131,22 @@ export default {
         return onFilter();
       }
 
-      setTimeout(() => {
-        Notification.dispatch("notify", {
-          message: this.$t("changes_no_submit"),
-          buttonText: this.$t("button.ignore_and_continue"),
-          numberOfChars: 500,
-          type: "warning",
-          onClick() {
-            Notification.dispatch("clear");
-            return onFilter();
-          },
-          onClose() {
-            Notification.dispatch("clear");
-            return onClose();
-          },
-        });
-      }, 100);
+      Notification.dispatch("notify", {
+        message: this.$t("changes_no_submit"),
+        buttonText: this.$t("button.ignore_and_continue"),
+        permanent: true,
+        type: "warning",
+        onClick() {
+          return onFilter();
+        },
+        onClose() {
+          return onClose();
+        },
+      });
     },
   },
-  setup() {
-    return useRecordFeedbackTaskViewModel();
+  setup(props) {
+    return useRecordFeedbackTaskViewModel(props);
   },
   mounted() {
     this.$root.$on("on-change-record-page", this.onChangeRecordPage);
@@ -175,13 +168,36 @@ export default {
 .wrapper {
   display: flex;
   flex-wrap: wrap;
-  gap: $base-space * 2;
   height: 100%;
+  gap: $base-space * 2;
+  padding: $base-space * 2;
+
+  @include media("<desktop") {
+    flex-flow: column;
+    overflow: auto;
+  }
+  &__records,
+  &__form {
+    @include media("<desktop") {
+      overflow: visible;
+      height: auto;
+      max-height: none !important;
+    }
+  }
+  &__records {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: $base-space;
+    height: 100%;
+    min-width: 0;
+  }
   &__text {
     color: $black-54;
   }
   &--empty {
     width: 100%;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;

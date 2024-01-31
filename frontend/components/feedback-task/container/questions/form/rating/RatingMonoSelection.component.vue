@@ -6,6 +6,13 @@
         v-for="option in options"
         :key="option.id"
         @keydown.enter.prevent
+        :data-title="
+          suggestions === option.value
+            ? $t('suggestion.name')
+            : option.isSelected
+            ? $t('annotation')
+            : null
+        "
       >
         <input
           ref="options"
@@ -17,8 +24,11 @@
           @focus="onFocus"
         />
         <label
-          class="label-text cursor-pointer"
-          :class="{ 'label-active': option.isSelected }"
+          class="label-text"
+          :class="{
+            'label-active': option.isSelected,
+            '--suggestion': suggestions === option.value,
+          }"
           :for="option.id"
           v-text="option.value"
         />
@@ -38,6 +48,9 @@ export default {
     isFocused: {
       type: Boolean,
       default: () => false,
+    },
+    suggestions: {
+      type: Number,
     },
   },
   model: {
@@ -67,6 +80,10 @@ export default {
       });
 
       this.$emit("on-change", this.options);
+
+      if (isSelected) {
+        this.$emit("on-selected");
+      }
     },
     onFocus() {
       this.$emit("on-focus");
@@ -76,6 +93,7 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+$suggestion-color: palette(yellow, 400);
 .container {
   display: flex;
   .inputs-area {
@@ -104,6 +122,21 @@ export default {
   font-weight: 500;
   overflow: hidden;
   transition: all 0.2s ease-in-out;
+  cursor: pointer;
+  &.--suggestion {
+    background: $suggestion-color;
+    &:not(.label-active):hover {
+      background: darken($suggestion-color, 8%);
+    }
+  }
+  &.label-active {
+    color: white;
+    background: palette(purple, 200);
+    &.--suggestion {
+      border: 2px solid $suggestion-color;
+    }
+  }
+
   &:not(.label-active):hover {
     background: darken(palette(purple, 800), 8%);
   }
@@ -128,11 +161,10 @@ input[type="checkbox"] {
     }
   }
 }
-.label-active {
-  color: white;
-  background: palette(purple, 200);
-}
-.cursor-pointer {
-  cursor: pointer;
+
+[data-title] {
+  position: relative;
+  overflow: visible;
+  @include tooltip-mini("top");
 }
 </style>

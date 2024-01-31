@@ -1,14 +1,18 @@
 <template>
   <div class="title-area --body1">
+    <BaseTooltip
+      v-if="question.suggestion"
+      :text="suggestionTooltipText"
+      :offset="4"
+      position="left"
+      minimalist
+    >
+      <span class="title-area__suggestion-icon" v-text="`✨ `" />
+    </BaseTooltip>
     <span
       class="suggestion-info"
       v-text="question.title"
       v-required-field="{ show: question.isRequired, color: 'red' }"
-      v-prefix-star="{
-        enabled: showSuggestion,
-        show: question.matchSuggestion,
-        tooltip: 'This question contains a suggestion',
-      }"
     />
     <BaseIconWithBadge
       class="icon-info"
@@ -38,10 +42,6 @@ export default {
       type: Object,
       required: true,
     },
-    showSuggestion: {
-      type: Boolean,
-      default: () => false,
-    },
   },
   data() {
     return {
@@ -53,6 +53,11 @@ export default {
   computed: {
     showIcon() {
       return !!this.question.description?.length;
+    },
+    suggestionTooltipText() {
+      return `This question contains a suggestion \n agent: ${
+        this.question.suggestion.agent || "-"
+      } \n score: ${this.question.suggestion.score || "-"}`;
     },
   },
   watch: {
@@ -73,6 +78,10 @@ export default {
 .title-area {
   color: $black-87;
   font-weight: 500;
+  &__suggestion-icon {
+    font-size: 1.2em;
+    cursor: default;
+  }
 }
 
 .icon {
@@ -103,16 +112,6 @@ span {
     &:after {
       margin-top: 0;
     }
-  }
-}
-:deep([data-title]):hover {
-  position: relative;
-  cursor: pointer;
-  @extend %has-tooltip--top;
-  &:after {
-    transform: none;
-    right: auto;
-    left: -1.5em;
   }
 }
 </style>

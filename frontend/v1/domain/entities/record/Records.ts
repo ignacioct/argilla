@@ -1,49 +1,109 @@
+import { PageCriteria } from "../page/PageCriteria";
 import { Record } from "./Record";
-
-const NEXT_RECORDS_TO_FETCH = 10;
+import { RecordStatus } from "./RecordAnswer";
+import { RecordCriteria } from "./RecordCriteria";
 
 export class Records {
-  public readonly records: Record[];
-  constructor(records: Record[] = [], public readonly total: number = 0) {
-    this.records = records.sort((r1, r2) => (r1.page < r2.page ? -1 : 1));
+  constructor(
+    public records: Record[] = [],
+    public readonly total: number = 0
+  ) {
+    this.arrangeQueue();
   }
 
   get hasRecordsToAnnotate() {
     return this.records.length > 0;
   }
 
-  existsRecordOn(page: number) {
-    return !!this.getRecordOn(page);
+  existsRecordOn(criteria: PageCriteria) {
+    return !!this.getRecordOn(criteria);
   }
 
-  getRecordOn(page: number) {
-    return this.records.find((record) => record.page === page);
+  getRecordOn(criteria: PageCriteria) {
+    return this.records.find((record) => record.page === criteria.client.page);
   }
 
-  getPageToFind(
-    page: number,
-    status: string
-  ): { fromRecord: number; howMany: number } {
-    const currentPage = {
-      fromRecord: page,
-      howMany: NEXT_RECORDS_TO_FETCH,
-    };
-    if (!this.hasRecordsToAnnotate) return currentPage;
-    const recordsAnnotated = this.quantityOfRecordsAnnotated(status);
-    const isMovingToNext = page > this.lastRecord.page;
+  getRecordsOn(criteria: PageCriteria): Record[] {
+    return this.records
+      .filter((record) => record.page >= criteria.client.page)
+      .splice(0, criteria.client.many);
+  }
 
-    if (isMovingToNext) {
-      return {
-        fromRecord: this.lastRecord.page + 1 - recordsAnnotated,
-        howMany: NEXT_RECORDS_TO_FETCH,
-      };
-    } else if (this.firstRecord.page > page)
-      return {
-        fromRecord: this.firstRecord.page - 1,
-        howMany: 1,
-      };
+  getById(recordId: string): Record {
+    return this.records.find((record) => record.id === recordId);
+  }
 
-    return currentPage;
+  synchronizeQueuePagination(criteria: RecordCriteria): void {
+    const {
+      page,
+      status,
+      isFilteringBySimilarity,
+      similaritySearch,
+      committed,
+    } = criteria;
+
+    if (page.isBulkMode && committed.page.isFocusMode) return;
+    if (page.isFocusMode && committed.page.isBulkMode) return;
+
+    if (isFilteringBySimilarity) {
+      return page.synchronizePagination({
+        from: 1,
+        many: similaritySearch.limit,
+      });
+    }
+
+    if (this.hasRecordsToAnnotate) {
+      const isMovingForward = page.client.page > this.lastRecord.page;
+
+      const recordsAnnotated = this.recordsAnnotatedOnQueue(status);
+
+      if (isMovingForward) {
+        return page.synchronizePagination({
+          from: this.lastRecord.page + 1 - recordsAnnotated,
+          many: page.client.many,
+        });
+      }
+
+      const isMovingBackward = this.firstRecord.page > page.client.page;
+
+      if (isMovingBackward) {
+        if (page.isBulkMode)
+          return page.synchronizePagination({
+            from: this.firstRecord.page - page.client.many,
+            many: page.client.many,
+          });
+
+        return page.synchronizePagination({
+          from: this.firstRecord.page - 1,
+          many: 1,
+        });
+      }
+    }
+
+    page.synchronizePagination({
+      from: page.client.page,
+      many: page.client.many,
+    });
+  }
+
+  append(newRecords: Records) {
+    newRecords.records.forEach((newRecord) => {
+      const recordIndex = this.records.findIndex(
+        (record) => record.id === newRecord.id
+      );
+
+      if (recordIndex === -1) {
+        this.records.push(newRecord);
+      } else {
+        this.records[recordIndex] = newRecord;
+      }
+    });
+
+    this.arrangeQueue();
+  }
+
+  private arrangeQueue() {
+    this.records = this.records.sort((r1, r2) => (r1.page < r2.page ? -1 : 1));
   }
 
   private get lastRecord() {
@@ -54,7 +114,13 @@ export class Records {
     return this.records[0];
   }
 
-  private quantityOfRecordsAnnotated(status: string) {
+  private recordsAnnotatedOnQueue(status: RecordStatus) {
     return this.records.filter((record) => record.status !== status).length;
+  }
+}
+
+export class RecordsWithReference extends Records {
+  constructor(records: Record[], total, public readonly reference: Record) {
+    super(records, total);
   }
 }

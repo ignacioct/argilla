@@ -19,12 +19,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from argilla.server.contexts import datasets
 from argilla.server.database import get_async_db
+from argilla.server.errors.future import NotFoundError
 from argilla.server.models import Response, User
 from argilla.server.policies import ResponsePolicyV1, authorize
 from argilla.server.schemas.v1.responses import Response as ResponseSchema
-from argilla.server.schemas.v1.responses import ResponseUpdate
+from argilla.server.schemas.v1.responses import (
+    ResponsesBulk,
+    ResponsesBulkCreate,
+    ResponseUpdate,
+)
 from argilla.server.search_engine import SearchEngine, get_search_engine
 from argilla.server.security import auth
+from argilla.server.use_cases.responses.upsert_responses_in_bulk import (
+    UpsertResponsesInBulkUseCase,
+    UpsertResponsesInBulkUseCaseFactory,
+)
 
 router = APIRouter(tags=["responses"])
 
@@ -36,7 +45,23 @@ async def _get_response(db: AsyncSession, response_id: UUID) -> Response:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Response with id `{response_id}` not found",
         )
+
     return response
+
+
+@router.post("/me/responses/bulk", response_model=ResponsesBulk)
+async def create_current_user_responses_bulk(
+    *,
+    body: ResponsesBulkCreate,
+    current_user: User = Security(auth.get_current_user),
+    use_case: UpsertResponsesInBulkUseCase = Depends(UpsertResponsesInBulkUseCaseFactory()),
+):
+    try:
+        responses_bulk_items = await use_case.execute(body.items, user=current_user)
+    except NotFoundError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err))
+    else:
+        return ResponsesBulk(items=responses_bulk_items)
 
 
 @router.put("/responses/{response_id}", response_model=ResponseSchema)

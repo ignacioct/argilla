@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-from pydantic import BaseModel, Field
-
 from argilla.client.apis import AbstractApi, api_compatibility
 from argilla.client.sdk.commons.errors import (
     AlreadyExistsApiError,
@@ -29,6 +27,7 @@ from argilla.client.sdk.commons.errors import (
 )
 from argilla.client.sdk.datasets.api import get_dataset
 from argilla.client.sdk.datasets.models import TaskType
+from argilla.pydantic_v1 import BaseModel, Field
 
 
 @dataclass
@@ -57,19 +56,26 @@ class LabelsSchemaSettings(_AbstractSettings):
 
     """
 
-    label_schema: Set[str]
+    label_schema: List[str]
 
     def __post_init__(self):
         if not isinstance(self.label_schema, (set, list, tuple)):
             raise ValueError(
                 f"`label_schema` is of type={type(self.label_schema)}, but type=set is preferred, and also both type=list and type=tuple are allowed."
             )
-        self.label_schema = set([str(label) for label in self.label_schema])
+        self.label_schema = self._get_unique_labels()
+
+    def _get_unique_labels(self) -> List[str]:
+        unique_labels = []
+        for label in self.label_schema:
+            if label not in unique_labels:
+                unique_labels.append(label)
+        return unique_labels
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LabelsSchemaSettings":
         label_schema = data.get("label_schema", {})
-        labels = {label["name"] for label in label_schema.get("labels", [])}
+        labels = [label["name"] for label in label_schema.get("labels", [])]
         return cls(label_schema=labels)
 
     @property

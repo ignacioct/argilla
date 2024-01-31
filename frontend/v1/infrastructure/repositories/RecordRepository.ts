@@ -1,55 +1,64 @@
 import { type NuxtAxiosInstance } from "@nuxtjs/axios";
 import {
   BackedRecord,
-  BackedRecords,
   BackendAnswerCombinations,
-  BackendResponse,
-  BackendRecordStatus,
+  BackendResponseResponse,
   BackendSearchRecords,
+  BackendAdvanceSearchQuery,
   ResponseWithTotal,
+  BackedRecords,
+  BackendRecordStatus,
+  BackendSimilaritySearchOrder,
+  BackendSort,
+  BackendResponseBulkRequest,
+  BackendResponseRequest,
+  BackendResponseBulkResponse,
 } from "../types";
 import { RecordAnswer } from "@/v1/domain/entities/record/RecordAnswer";
 import { Record } from "@/v1/domain/entities/record/Record";
 import { Question } from "@/v1/domain/entities/question/Question";
+import { RecordCriteria } from "@/v1/domain/entities/record/RecordCriteria";
+import { SimilarityOrder } from "@/v1/domain/entities/similarity/SimilarityCriteria";
+import { RangeValue, ValuesOption } from "~/v1/domain/entities/common/Filter";
 
 const RECORD_API_ERRORS = {
   ERROR_FETCHING_RECORDS: "ERROR_FETCHING_RECORDS",
+  ERROR_FETCHING_RECORD_BY_ID: "ERROR_FETCHING_RECORD_BY_ID",
   ERROR_DELETING_RECORD_RESPONSE: "ERROR_DELETING_RECORD_RESPONSE",
   ERROR_UPDATING_RECORD_RESPONSE: "ERROR_UPDATING_RECORD_RESPONSE",
   ERROR_CREATING_RECORD_RESPONSE: "ERROR_CREATING_RECORD_RESPONSE",
+  ERROR_CREATING_RECORD_RESPONSE_BULK: "ERROR_CREATING_RECORD_RESPONSE_BULK",
+};
+
+const BACKEND_ORDER: {
+  [key in SimilarityOrder]: BackendSimilaritySearchOrder;
+} = {
+  most: "most_similar",
+  least: "least_similar",
 };
 
 export class RecordRepository {
   constructor(private readonly axios: NuxtAxiosInstance) {}
 
-  getRecords(
-    datasetId: string,
-    fromRecord: number,
-    howMany: number,
-    status: string,
-    searchText: string,
-    metadata: string[],
-    sortBy: string[]
-  ): Promise<BackedRecords> {
-    if (searchText?.length)
-      return this.getRecordsByText(
-        datasetId,
-        fromRecord,
-        howMany,
-        status,
-        searchText,
-        metadata,
-        sortBy
-      );
+  getRecords(criteria: RecordCriteria): Promise<BackedRecords> {
+    if (criteria.isFilteringByAdvanceSearch)
+      return this.getRecordsByAdvanceSearch(criteria);
 
-    return this.getRecordsDatasetId(
-      datasetId,
-      fromRecord,
-      howMany,
-      status,
-      metadata,
-      sortBy
-    );
+    return this.getRecordsByDatasetId(criteria);
+  }
+
+  async getRecord(recordId: string): Promise<BackedRecord> {
+    try {
+      const url = `/v1/records/${recordId}`;
+
+      const { data } = await this.axios.get<BackedRecord>(url);
+
+      return data;
+    } catch (err) {
+      throw {
+        response: RECORD_API_ERRORS.ERROR_FETCHING_RECORD_BY_ID,
+      };
+    }
   }
 
   async deleteRecordResponse(record: Record) {
@@ -70,7 +79,7 @@ export class RecordRepository {
     return this.createRecordResponse(record, "discarded");
   }
 
-  submitNewRecordResponse(record: Record): Promise<RecordAnswer> {
+  submitRecordResponse(record: Record): Promise<RecordAnswer> {
     if (record.answer) return this.updateRecordResponse(record, "submitted");
 
     return this.createRecordResponse(record, "submitted");
@@ -82,6 +91,41 @@ export class RecordRepository {
     return this.createRecordResponse(record, "draft");
   }
 
+  async annotateBulkRecords(records: Record[], status: BackendRecordStatus) {
+    try {
+      const request = this.createRequestForBulk(status, records);
+
+      const { data } = await this.axios.post<BackendResponseBulkResponse>(
+        "/v1/me/responses/bulk",
+        request
+      );
+
+      return data.items.map(({ item, error }) => {
+        if (item) {
+          return {
+            success: true,
+            recordId: item.record_id,
+            response: new RecordAnswer(
+              item.id,
+              item.status,
+              item.values,
+              item.updated_at
+            ),
+          };
+        }
+
+        return {
+          success: false,
+          error: error.detail,
+        };
+      });
+    } catch (error) {
+      throw {
+        response: RECORD_API_ERRORS.ERROR_CREATING_RECORD_RESPONSE_BULK,
+      };
+    }
+  }
+
   private async updateRecordResponse(
     record: Record,
     status: BackendRecordStatus
@@ -89,7 +133,7 @@ export class RecordRepository {
     try {
       const request = this.createRequest(status, record.questions);
 
-      const { data } = await this.axios.put<BackendResponse>(
+      const { data } = await this.axios.put<BackendResponseResponse>(
         `/v1/responses/${record.answer.id}`,
         request
       );
@@ -109,7 +153,7 @@ export class RecordRepository {
     try {
       const request = this.createRequest(status, record.questions);
 
-      const { data } = await this.axios.post<BackendResponse>(
+      const { data } = await this.axios.post<BackendResponseResponse>(
         `/v1/records/${record.id}/responses`,
         request
       );
@@ -127,24 +171,15 @@ export class RecordRepository {
     }
   }
 
-  private async getRecordsDatasetId(
-    datasetId: string,
-    fromRecord: number,
-    howMany: number,
-    status: string,
-    metadata: string[],
-    sortBy: string[]
+  private async getRecordsByDatasetId(
+    criteria: RecordCriteria
   ): Promise<BackedRecords> {
+    const { datasetId, status, page } = criteria;
+    const { from, many } = page.server;
     try {
       const url = `/v1/me/datasets/${datasetId}/records`;
 
-      const params = this.createParams(
-        fromRecord,
-        howMany,
-        status,
-        metadata,
-        sortBy
-      );
+      const params = this.createParams(from, many, status);
 
       const { data } = await this.axios.get<ResponseWithTotal<BackedRecord[]>>(
         url,
@@ -165,35 +200,230 @@ export class RecordRepository {
     }
   }
 
-  private async getRecordsByText(
-    datasetId: string,
-    fromRecord: number,
-    howMany: number,
-    status: string,
-    searchText: string,
-    metadata: string[],
-    sortBy: string[]
+  private async getRecordsByAdvanceSearch(
+    criteria: RecordCriteria
   ): Promise<BackedRecords> {
+    const {
+      datasetId,
+      page,
+      status,
+      searchText,
+      metadata,
+      sortBy,
+      similaritySearch,
+      response,
+      suggestion,
+      isFilteringByText,
+      isFilteringByMetadata,
+      isFilteringBySimilarity,
+      isFilteringByResponse,
+      isFilteringBySuggestion,
+      isSortingBy,
+    } = criteria;
+    const { from, many } = page.server;
+
     try {
       const url = `/v1/me/datasets/${datasetId}/records/search`;
 
-      const body = JSON.parse(
-        JSON.stringify({
-          query: {
-            text: {
-              q: searchText,
-            },
-          },
-        })
-      );
+      const body: BackendAdvanceSearchQuery = {
+        query: {},
+      };
 
-      const params = this.createParams(
-        fromRecord,
-        howMany,
-        status,
-        metadata,
-        sortBy
-      );
+      if (isFilteringBySimilarity) {
+        body.query.vector = {
+          name: similaritySearch.vectorName,
+          record_id: similaritySearch.recordId,
+          max_results: similaritySearch.limit,
+          order: BACKEND_ORDER[similaritySearch.order],
+        };
+      }
+
+      if (isFilteringByText) {
+        body.query.text = {
+          q: searchText,
+        };
+      }
+
+      if (
+        isFilteringByMetadata ||
+        isFilteringByResponse ||
+        isFilteringBySuggestion
+      ) {
+        body.filters = {
+          and: [],
+        };
+      }
+
+      if (isFilteringByMetadata) {
+        metadata.value.forEach((m) => {
+          const range = m.value as RangeValue;
+
+          if ("ge" in range && "le" in range) {
+            body.filters.and.push({
+              type: "range",
+              scope: {
+                entity: "metadata",
+                metadata_property: m.name,
+              },
+              ge: range.ge,
+              le: range.le,
+            });
+
+            return;
+          }
+
+          body.filters.and.push({
+            type: "terms",
+            scope: {
+              entity: "metadata",
+              metadata_property: m.name,
+            },
+            values: m.value as string[],
+          });
+        });
+      }
+
+      if (isFilteringByResponse) {
+        response.or.forEach((r) => {
+          const value = r.value as RangeValue;
+          if ("ge" in value && "le" in value) {
+            body.filters.and.push({
+              type: "range",
+              scope: {
+                entity: "response",
+                question: r.name,
+              },
+              ge: value.ge,
+              le: value.le,
+            });
+            return;
+          }
+          body.filters.and.push({
+            type: "terms",
+            scope: {
+              entity: "response",
+              question: r.name,
+            },
+            values: r.value as string[],
+          });
+        });
+
+        response.and.forEach((r) => {
+          body.filters.and.push({
+            type: "terms",
+            scope: {
+              entity: "response",
+              question: r.name,
+            },
+            values: [r.value],
+          });
+        });
+      }
+
+      if (isFilteringBySuggestion) {
+        suggestion.or.forEach((suggestion) => {
+          if (suggestion.configuration.name === "score") {
+            const value = suggestion.configuration.value as RangeValue;
+
+            body.filters.and.push({
+              type: "range",
+              scope: {
+                entity: "suggestion",
+                question: suggestion.question.name,
+                property: suggestion.configuration.name,
+              },
+              ge: value.ge,
+              le: value.le,
+            });
+          }
+
+          if (suggestion.configuration.name === "value") {
+            const value = suggestion.configuration.value as RangeValue;
+
+            if ("ge" in value && "le" in value) {
+              body.filters.and.push({
+                type: "range",
+                scope: {
+                  entity: "suggestion",
+                  question: suggestion.question.name,
+                  property: suggestion.configuration.name,
+                },
+                ge: value.ge,
+                le: value.le,
+              });
+
+              return;
+            }
+
+            const valuesOptions = suggestion.configuration
+              .value as ValuesOption;
+
+            body.filters.and.push({
+              type: "terms",
+              scope: {
+                entity: "suggestion",
+                question: suggestion.question.name,
+                property: suggestion.configuration.name,
+              },
+              values: valuesOptions.values,
+            });
+          }
+
+          if (suggestion.configuration.name === "agent") {
+            const values = suggestion.configuration.value as string[];
+
+            body.filters.and.push({
+              type: "terms",
+              scope: {
+                entity: "suggestion",
+                question: suggestion.question.name,
+                property: suggestion.configuration.name,
+              },
+              values,
+            });
+          }
+        });
+
+        suggestion.and.forEach((suggestion) => {
+          body.filters.and.push({
+            type: "terms",
+            scope: {
+              entity: "suggestion",
+              question: suggestion.question.name,
+              property: suggestion.configuration.name,
+            },
+            values: [suggestion.configuration.value],
+          });
+        });
+      }
+
+      if (isSortingBy) {
+        body.sort = [];
+
+        sortBy.value.forEach((sort) => {
+          const backendSort: BackendSort = {
+            scope: {
+              entity: sort.entity,
+            },
+            order: sort.order,
+          };
+
+          if (sort.property) {
+            backendSort.scope.question = sort.name;
+            backendSort.scope.property = sort.property;
+          } else if (sort.entity === "response") {
+            backendSort.scope.question = sort.name;
+          } else if (sort.entity === "metadata") {
+            backendSort.scope.metadata_property = sort.name;
+          } else if (sort.entity === "record") {
+            backendSort.scope.property = sort.name;
+          }
+
+          body.sort.push(backendSort);
+        });
+      }
+
+      const params = this.createParams(from, many, status);
 
       const { data } = await this.axios.post<
         ResponseWithTotal<BackendSearchRecords[]>
@@ -201,7 +431,12 @@ export class RecordRepository {
 
       const { items, total } = data;
 
-      const records = items.map((item) => item.record);
+      const records = items.map((item) => {
+        return {
+          ...item.record,
+          query_score: item.query_score,
+        };
+      });
 
       return {
         records,
@@ -214,10 +449,28 @@ export class RecordRepository {
     }
   }
 
+  private createRequestForBulk(
+    status: BackendRecordStatus,
+    records: Record[]
+  ): BackendResponseBulkRequest {
+    const request: BackendResponseBulkRequest = {
+      items: [],
+    };
+
+    records.forEach(({ id, questions }) => {
+      request.items.push({
+        ...this.createRequest(status, questions),
+        record_id: id,
+      });
+    });
+
+    return request;
+  }
+
   private createRequest(
     status: BackendRecordStatus,
     questions: Question[]
-  ): Omit<BackendResponse, "id" | "updated_at"> {
+  ): BackendResponseRequest {
     const values = {} as BackendAnswerCombinations;
 
     questions
@@ -235,32 +488,15 @@ export class RecordRepository {
     };
   }
 
-  private createParams(
-    fromRecord: number,
-    howMany: number,
-    status: string,
-    metadata: string[],
-    sortBy: string[]
-  ) {
+  private createParams(fromRecord: number, howMany: number, status: string) {
     const offset = `${fromRecord - 1}`;
-    const backendStatus = status === "pending" ? "missing" : status;
     const params = new URLSearchParams();
 
     params.append("include", "responses");
     params.append("include", "suggestions");
     params.append("offset", offset);
     params.append("limit", howMany.toString());
-    params.append("response_status", backendStatus);
-
-    if (backendStatus === "missing") params.append("response_status", "draft");
-
-    metadata.forEach((query) => {
-      params.append("metadata", query);
-    });
-
-    sortBy.forEach((sort) => {
-      params.append("sort_by", sort);
-    });
+    params.append("response_status", status);
 
     return params;
   }

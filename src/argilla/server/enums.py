@@ -27,7 +27,8 @@ class ResponseStatus(str, Enum):
 
 class ResponseStatusFilter(str, Enum):
     draft = "draft"
-    missing = "missing"
+    missing = "missing"  # Deprecated, use pending instead
+    pending = "pending"
     submitted = "submitted"
     discarded = "discarded"
 
@@ -51,6 +52,7 @@ class UserRole(str, Enum):
 class RecordInclude(str, Enum):
     responses = "responses"
     suggestions = "suggestions"
+    vectors = "vectors"
 
 
 class QuestionType(str, Enum):
@@ -75,3 +77,8 @@ class RecordSortField(str, Enum):
 class SortOrder(str, Enum):
     asc = "asc"
     desc = "desc"
+
+
+class SimilarityOrder(str, Enum):
+    most_similar = "most_similar"
+    least_similar = "least_similar"

@@ -2,7 +2,7 @@
   <div class="description">
     <h2
       class="--heading5 --medium description__title"
-      v-text="'Annotation guidelines'"
+      v-text="$t('annotationGuidelines')"
     />
     <BaseCardWithTabs :tabs="tabs">
       <template v-slot="{ currentComponent }">
@@ -33,8 +33,8 @@ export default {
   data() {
     return {
       tabs: [
-        { name: "Write", component: "ContentEditableFeedbackTask" },
-        { name: "Preview", component: "RenderMarkdownBaseComponent" },
+        { id: "0", name: "Write", component: "ContentEditableFeedbackTask" },
+        { id: "1", name: "Preview", component: "RenderMarkdownBaseComponent" },
       ],
     };
   },
@@ -43,7 +43,7 @@ export default {
       return this.dataset.guidelines ?? "";
     },
     originalSanitizedDescription() {
-      return this.dataset.originalGuidelines ?? "";
+      return this.dataset.original.guidelines ?? "";
     },
   },
   methods: {

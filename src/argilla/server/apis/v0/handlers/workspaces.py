@@ -16,15 +16,16 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Security
-from pydantic import parse_obj_as
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from argilla.server.contexts import accounts
 from argilla.server.database import get_async_db
 from argilla.server.errors import EntityAlreadyExistsError, EntityNotFoundError
 from argilla.server.policies import WorkspacePolicy, WorkspaceUserPolicy, authorize
+from argilla.server.pydantic_v1 import parse_obj_as
+from argilla.server.schemas.v0.users import User
+from argilla.server.schemas.v0.workspaces import Workspace, WorkspaceCreate, WorkspaceUserCreate
 from argilla.server.security import auth
-from argilla.server.security.model import User, Workspace, WorkspaceCreate, WorkspaceUserCreate
 
 router = APIRouter(tags=["workspaces"])
 

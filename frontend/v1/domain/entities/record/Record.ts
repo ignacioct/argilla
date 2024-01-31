@@ -2,6 +2,7 @@ import { isEqual, cloneDeep } from "lodash";
 import { Field } from "../field/Field";
 import { Question } from "../question/Question";
 import { Suggestion } from "../question/Suggestion";
+import { Score } from "../similarity/Score";
 import { RecordAnswer } from "./RecordAnswer";
 
 const DEFAULT_STATUS = "pending";
@@ -10,7 +11,7 @@ export class Record {
   // eslint-disable-next-line no-use-before-define
   private original: Record;
   public updatedAt?: string;
-
+  public readonly score: Score;
   constructor(
     public readonly id: string,
     public readonly datasetId: string,
@@ -18,10 +19,12 @@ export class Record {
     public readonly fields: Field[],
     public answer: RecordAnswer,
     private readonly suggestions: Suggestion[],
+    score: number,
     public readonly page: number
   ) {
     this.completeQuestion();
     this.updatedAt = answer?.updatedAt;
+    this.score = new Score(score);
   }
 
   get status() {
@@ -72,6 +75,18 @@ export class Record {
     this.initialize();
   }
 
+  answerWith(recordReference: Record) {
+    this.questions.forEach((question) => {
+      const questionReference = recordReference.questions.find(
+        (q) => q.id === question.id
+      );
+
+      if (!questionReference) return;
+
+      question.clone(questionReference);
+    });
+  }
+
   initialize() {
     this.completeQuestion();
 
@@ -108,18 +123,15 @@ export class Record {
 
   private completeQuestion() {
     return this.questions.map((question) => {
-      const answerForQuestion = this.answer?.value[question.name];
-
+      const answer = this.answer?.value[question.name];
+      const suggestion = this.suggestions?.find(
+        (s) => s.questionId === question.id
+      );
+      question.addSuggestion(suggestion);
       if (this.isPending || this.isDraft) {
-        question.complete(answerForQuestion);
-
-        const suggestion = this.suggestions?.find(
-          (s) => s.questionId === question.id
-        );
-
-        question.suggests(suggestion);
+        question.responseIfUnanswered(answer);
       } else {
-        question.forceComplete(answerForQuestion);
+        question.response(answer);
       }
 
       return question;

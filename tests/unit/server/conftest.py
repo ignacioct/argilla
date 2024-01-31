@@ -13,40 +13,36 @@
 #  limitations under the License.
 
 import contextlib
-from typing import AsyncGenerator, Dict, Generator
+import uuid
+from typing import TYPE_CHECKING, Dict, Generator
 
 import pytest
 import pytest_asyncio
-from argilla._constants import API_KEY_HEADER_NAME, DEFAULT_API_KEY
+from argilla.server import telemetry
+from argilla.server.constants import API_KEY_HEADER_NAME, DEFAULT_API_KEY
 from argilla.server.daos.backend import GenericElasticEngineBackend
 from argilla.server.daos.datasets import DatasetsDAO
 from argilla.server.daos.records import DatasetRecordsDAO
 from argilla.server.database import get_async_db
 from argilla.server.models import User, UserRole, Workspace
 from argilla.server.search_engine import SearchEngine, get_search_engine
-from argilla.server.server import argilla_app
-from argilla.server.services.datasets import DatasetsService
 from argilla.server.settings import settings
-from argilla.utils import telemetry
-from argilla.utils.telemetry import TelemetryClient
+from argilla.server.telemetry import TelemetryClient
 from httpx import AsyncClient
 from opensearchpy import OpenSearch
 
 from tests.database import TestSession
 from tests.factories import AnnotatorFactory, OwnerFactory, UserFactory
 
+if TYPE_CHECKING:
+    from unittest.mock import MagicMock
+
+    from pytest_mock import MockerFixture
+
 
 @pytest.fixture(scope="session")
 def elasticsearch_config():
     return {"hosts": settings.elasticsearch}
-
-
-@pytest_asyncio.fixture()
-async def elastic_search_engine(elasticsearch_config: dict) -> AsyncGenerator[SearchEngine, None]:
-    engine = SearchEngine(config=elasticsearch_config, es_number_of_replicas=0, es_number_of_shards=1)
-    yield engine
-
-    await engine.client.close()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -87,6 +83,8 @@ def owner_auth_header(owner: User) -> Dict[str, str]:
 async def async_client(
     request, mock_search_engine: SearchEngine, mocker: "MockerFixture"
 ) -> Generator["AsyncClient", None, None]:
+    from argilla.server.app import app
+
     async def override_get_async_db():
         session = TestSession()
         yield session
@@ -94,22 +92,24 @@ async def async_client(
     async def override_get_search_engine():
         yield mock_search_engine
 
-    mocker.patch("argilla.server.server._get_db_wrapper", wraps=contextlib.asynccontextmanager(override_get_async_db))
+    mocker.patch("argilla.server.app._get_db_wrapper", wraps=contextlib.asynccontextmanager(override_get_async_db))
 
-    argilla_app.dependency_overrides[get_async_db] = override_get_async_db
-    argilla_app.dependency_overrides[get_search_engine] = override_get_search_engine
+    app.dependency_overrides[get_async_db] = override_get_async_db
+    app.dependency_overrides[get_search_engine] = override_get_search_engine
 
-    async with AsyncClient(app=argilla_app, base_url="http://testserver") as async_client:
+    async with AsyncClient(app=app, base_url="http://testserver") as async_client:
         yield async_client
 
-    argilla_app.dependency_overrides.clear()
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture(autouse=True)
 def test_telemetry(mocker: "MockerFixture") -> "MagicMock":
-    telemetry._CLIENT = TelemetryClient(disable_send=True)
+    mock_telemetry = mocker.Mock(TelemetryClient)
+    mock_telemetry.server_id = uuid.uuid4()
 
-    return mocker.spy(telemetry._CLIENT, "track_data")
+    telemetry._CLIENT = mock_telemetry
+    return telemetry._CLIENT
 
 
 @pytest.fixture(scope="session")
@@ -120,11 +120,6 @@ def records_dao(es: GenericElasticEngineBackend):
 @pytest.fixture(scope="session")
 def datasets_dao(records_dao: DatasetRecordsDAO, es: GenericElasticEngineBackend):
     return DatasetsDAO.get_instance(es=es, records_dao=records_dao)
-
-
-@pytest.fixture(scope="session")
-def datasets_service(datasets_dao: DatasetsDAO):
-    return DatasetsService.get_instance(datasets_dao)
 
 
 @pytest_asyncio.fixture(scope="function")

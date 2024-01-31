@@ -1,15 +1,14 @@
 <template>
   <div :class="isButtonActive ? 'filter-button--active' : 'filter-button'">
-    <BaseButton class="filter-button__button" v-if="!showIcon">{{
-      buttonName
-    }}</BaseButton>
-    <svgicon v-else :name="iconName" width="16" height="16" />
+    <svgicon v-if="iconName" :name="iconName" width="16" height="16" />
+    <BaseButton class="filter-button__button">{{ buttonName }}</BaseButton>
     <slot></slot>
     <svgicon
+      v-if="showChevronIcon"
       class="filter-button__chevron"
       name="chevron-down"
       width="16"
-      height="16"
+      height="8"
     />
   </div>
 </template>
@@ -17,6 +16,7 @@
 <script>
 import "assets/icons/chevron-down";
 import "assets/icons/sort";
+import "assets/icons/filter";
 export default {
   props: {
     buttonName: {
@@ -25,11 +25,10 @@ export default {
     },
     iconName: {
       type: String,
-      required: true,
     },
-    showIcon: {
+    showChevronIcon: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     isButtonActive: {
       type: Boolean,
@@ -44,12 +43,15 @@ export default {
   display: flex;
   gap: $base-space;
   align-items: center;
+  flex-shrink: 0;
   width: max-content;
-  height: $base-space * 5;
-  padding: $base-space 12px;
+  min-height: $base-space * 4;
+  padding: $base-space;
   border-radius: $border-radius;
   background: none;
   transition: background-color 0.2s ease;
+  line-height: 1;
+  color: $black-54;
   cursor: pointer;
   &:hover,
   &--active {
@@ -57,6 +59,9 @@ export default {
     @extend .filter-button;
   }
   &--active {
+    &:has(.filter-button-width-badges__badges) {
+      padding: 6px $base-space;
+    }
     &:hover {
       background: $black-6;
     }
@@ -64,6 +69,8 @@ export default {
   &__button.button {
     padding: 0;
     border-radius: 0;
+    @include font-size(14px);
+    line-height: 1.3;
   }
   & > * {
     flex-shrink: 0;

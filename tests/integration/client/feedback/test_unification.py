@@ -61,7 +61,7 @@ def test_rating_question_strategy(strategy, unified_response):
     }
     question = RatingQuestion(**question_payload)
     strategy = RatingQuestionStrategy(strategy)
-    strategy.unify_responses([record], question)
+    strategy.compute_unified_responses([record], question)
     unified_response = [UnifiedValueSchema(**resp) for resp in unified_response]
     assert record._unified_responses[question_name] == unified_response
     assert RatingQuestionUnification(question=question, strategy=strategy)
@@ -70,10 +70,10 @@ def test_rating_question_strategy(strategy, unified_response):
 @pytest.mark.parametrize(
     "strategy, unified_response",
     [
-        ("mean", [{"value": "yes", "strategy": "mean"}]),
-        ("majority", [{"value": "yes", "strategy": "majority"}]),
-        ("max", [{"value": "no", "strategy": "max"}]),
-        ("min", [{"value": "yes", "strategy": "min"}]),
+        ("majority", [{"value": [{"rank": 2, "value": "yes"}, {"rank": 3, "value": "no"}], "strategy": "majority"}]),
+        ("max", [{"value": [{"rank": 2, "value": "yes"}, {"rank": 3, "value": "no"}], "strategy": "max"}]),
+        ("min", [{"value": [{"rank": 2, "value": "yes"}, {"rank": 1, "value": "no"}], "strategy": "min"}]),
+        ("mean", [{"value": [{"rank": 2, "value": "yes"}, {"rank": 2, "value": "no"}], "strategy": "mean"}]),
     ],
 )
 def test_ranking_question_strategy(strategy, unified_response):
@@ -95,7 +95,7 @@ def test_ranking_question_strategy(strategy, unified_response):
     }
     question = RankingQuestion(**question_payload)
     strategy = RankingQuestionStrategy(strategy)
-    strategy.unify_responses([record], question)
+    strategy.compute_unified_responses([record], question)
     unified_response = [UnifiedValueSchema(**resp) for resp in unified_response]
     assert record._unified_responses[question_name] == unified_response
     assert RankingQuestionUnification(question=question, strategy=strategy)
@@ -134,7 +134,7 @@ def test_label_question_strategy(strategy, unified_response):
     }
     question = LabelQuestion(**question_payload)
     strategy = LabelQuestionStrategy(strategy)
-    strategy.unify_responses([record], question)
+    strategy.compute_unified_responses([record], question)
     unified_response = [UnifiedValueSchema(**resp) for resp in unified_response]
     assert record._unified_responses[question_name] == unified_response
     assert LabelQuestionUnification(question=question, strategy=strategy)
@@ -173,7 +173,37 @@ def test_multi_label_question_strategy(strategy, unified_response):
     }
     question = MultiLabelQuestion(**question_payload)
     strategy = MultiLabelQuestionStrategy(strategy)
-    strategy.unify_responses([record], question)
+    strategy.compute_unified_responses([record], question)
+    unified_response = [UnifiedValueSchema(**resp) for resp in unified_response]
+    assert record._unified_responses[question_name] == unified_response
+    assert MultiLabelQuestionUnification(question=question, strategy=strategy)
+
+
+@pytest.mark.parametrize(
+    "strategy, unified_response",
+    [
+        ("majority", [{"value": ["label1"], "strategy": "majority"}]),
+    ],
+)
+def test_multi_label_question_strategy_without_overlap(strategy, unified_response):
+    question_name = "rating"
+    records_payload = {
+        "fields": {"text": "This is the first record", "label": "positive"},
+        "responses": [
+            {"values": {question_name: {"value": ["label1"]}}},
+            {"values": {question_name: {"value": ["label2"]}}},
+        ],
+    }
+    record = FeedbackRecord(**records_payload)
+    question_payload = {
+        "name": question_name,
+        "description": question_name,
+        "required": True,
+        "labels": ["label1", "label2"],
+    }
+    question = MultiLabelQuestion(**question_payload)
+    strategy = MultiLabelQuestionStrategy(strategy)
+    strategy.compute_unified_responses([record], question)
     unified_response = [UnifiedValueSchema(**resp) for resp in unified_response]
     assert record._unified_responses[question_name] == unified_response
     assert MultiLabelQuestionUnification(question=question, strategy=strategy)
